@@ -1,0 +1,8 @@
+*.o
+*.a
+*.bin
+*.ihex
+.cache/
+build/
+compile_commands.json
+
