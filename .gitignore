@@ -6,5 +6,6 @@
 build/
 compile_commands.json
 
+pdex.so
 *.pdex
 *.pdx
