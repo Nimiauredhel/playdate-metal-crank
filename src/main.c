@@ -49,13 +49,31 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 			pd->system->error("%s:%i Couldn't load font %s: %s", __FILE__, __LINE__, fontpath, err);
 
         bitmaps[0] = pd->graphics->loadBitmap("player.png", &err);
+        bitmaps[1] = pd->graphics->loadBitmap("wall.png", &err);
         // TODO: handle error like the above font loading
         bitmap_count = 1;
 
         entities[0].bitmap_idx = 0;
         entities[0].position.x = 5;
         entities[0].position.y = 5;
-        entity_count = 1;
+
+        entities[1].bitmap_idx = 1;
+        entities[1].position.x = 32;
+        entities[1].position.y = 32;
+
+        entities[2].bitmap_idx = 1;
+        entities[2].position.x = 32*2;
+        entities[2].position.y = 32*2;
+
+        entities[3].bitmap_idx = 1;
+        entities[3].position.x = 32*3;
+        entities[3].position.y = 32*3;
+
+        entities[4].bitmap_idx = 1;
+        entities[4].position.x = 32*4;
+        entities[4].position.y = 32*4;
+
+        entity_count = 5;
 
 		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
 		pd->system->setUpdateCallback(update, pd);
