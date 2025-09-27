@@ -26,8 +26,8 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release")
 set(CMAKE_XCODE_GENERATE_SCHEME TRUE)
 
 # Game Name Customization
-set(PLAYDATE_GAME_NAME test_game)
-set(PLAYDATE_GAME_DEVICE test_game_DEVICE)
+set(PLAYDATE_GAME_NAME metal_crank)
+set(PLAYDATE_GAME_DEVICE metal_crank_DEVICE)
 
 project(${PLAYDATE_GAME_NAME} C ASM)
 
