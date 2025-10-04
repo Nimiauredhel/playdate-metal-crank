@@ -9,6 +9,11 @@
 #define TEXT_WIDTH (86)
 #define TEXT_HEIGHT (16)
 
+#define LEVEL_WIDTH (16)
+#define LEVEL_HEIGHT (16)
+#define ROOM_WIDTH (16)
+#define ROOM_HEIGHT (16)
+
 typedef struct Vector2
 {
     int x;
@@ -29,10 +34,13 @@ typedef struct Tile
 
 typedef struct Room
 {
-    uint16_t width;
-    uint16_t height;
-    Tile_t tiles[];
+    Tile_t tiles[ROOM_WIDTH*ROOM_HEIGHT];
 } Room_t;
+
+typedef struct Level
+{
+    Room_t rooms[LEVEL_WIDTH*LEVEL_HEIGHT];
+} Level_t;
 
 static int update(void* userdata);
 
@@ -47,7 +55,9 @@ static LCDFont* font = NULL;
 static Entity_t entities[64] = {0};
 static LCDBitmap* bitmaps[32] = {0};
 
-static uint8_t room_buff[sizeof(Room_t) + (10 * 6 * sizeof(Tile_t))] = {0};
+static Level_t level = {0};
+uint16_t current_room_idx;
+static Room_t *current_room = level.rooms+0;
 
 static int bitmap_count = 0;
 static int entity_count = 0;
@@ -70,33 +80,43 @@ __declspec(dllexport)
 static uint8_t tile_type_at_pos(Room_t *room, int tile_x, int tile_y)
 {
     if (tile_x < 0 || tile_y < 0) return 1;
-    return room->tiles[tile_x + (tile_y * room->width)].type_idx;
+    return room->tiles[tile_x + (tile_y * ROOM_WIDTH)].type_idx;
 }
 
-static void populate_test_room(void)
+static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 {
-    Room_t *room = (Room_t *)room_buff;
-    room->width = 10;
-    room->height = 6;
-
+    Room_t *room = level.rooms + level_x + (level_y * LEVEL_WIDTH);
     // randomly place walls in level
-    uint8_t max_walls = 24;
-    uint8_t walls_count = 0;
+    uint16_t max_walls = (ROOM_WIDTH * ROOM_HEIGHT) / 2;
+    uint16_t walls_count = 0;
     bool placed_player = false;
     Vector2_t player_coord = {0};
 
-    for (int x = 0; x < room->width; x++)
+    for (int x = 0; x < ROOM_WIDTH; x++)
     {
-        for (int y = 0; y < room->height; y++)
+        for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            Tile_t *tile = room->tiles+(x + (room->width * y));
+            Tile_t *tile = current_room->tiles+(x + (ROOM_HEIGHT * y));
 
-            if (x == 0 || y == 0 || x == room->width - 1 || y == room->height - 1)
+            if (x == 0 || y == 0 || x == ROOM_WIDTH - 1 || y == ROOM_HEIGHT - 1)
             {
-                tile->bitmap_idx = 2;
-                tile->type_idx = 1;
+                if (x == ROOM_WIDTH/2)
+                {
+                    tile->bitmap_idx = 4;
+                    tile->type_idx = 2;
+                }
+                else if (y == ROOM_HEIGHT/2)
+                {
+                    tile->bitmap_idx = 3;
+                    tile->type_idx = 2;
+                }
+                else
+                {
+                    tile->bitmap_idx = 2;
+                    tile->type_idx = 1;
+                }
             }
-            else if(walls_count < max_walls && (rand() % 100) > 50)
+            else if(walls_count < max_walls && (rand() % 100) > 70)
             {
                 walls_count++;
                 tile->bitmap_idx = 2;
@@ -107,7 +127,7 @@ static void populate_test_room(void)
                 tile->bitmap_idx = 1;
                 tile->type_idx = 0;
 
-                if (!placed_player || (rand() % 100) > 50)
+                if (player_start && (!placed_player || (rand() % 100) > 80))
                 {
                     player_coord.x = x;
                     player_coord.y = y;
@@ -117,12 +137,31 @@ static void populate_test_room(void)
         }
     }
 
-    // place player
-    player_entity_idx = entity_count;
-    entity_count++;
-    entities[player_entity_idx].bitmap_idx = 0;
-    entities[player_entity_idx].position_px.x = player_coord.x * TILE_SIZE_PX;
-    entities[player_entity_idx].position_px.y = player_coord.y * TILE_SIZE_PX;
+    if (player_start)
+    {
+        // place player
+        player_entity_idx = entity_count;
+        entity_count++;
+        entities[player_entity_idx].bitmap_idx = 0;
+        entities[player_entity_idx].position_px.x = player_coord.x * TILE_SIZE_PX;
+        entities[player_entity_idx].position_px.y = player_coord.y * TILE_SIZE_PX;
+        current_room_idx = level_x + (level_y * LEVEL_WIDTH);
+        current_room = room;
+    }
+}
+
+void populate_level(void)
+{
+    uint16_t start_x = rand() % LEVEL_WIDTH;
+    uint16_t start_y = rand() % LEVEL_HEIGHT;
+
+    for (uint16_t x = 0; x < LEVEL_WIDTH; x++)
+    {
+        for (uint16_t y = 0; y < LEVEL_HEIGHT; y++)
+        {
+            populate_room(x, y, x == start_x && y == start_y);
+        }
+    }
 }
 
 int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
@@ -143,10 +182,13 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         bitmaps[0] = pd->graphics->loadBitmap("player.png", &err);
         bitmaps[1] = pd->graphics->loadBitmap("floor.png", &err);
         bitmaps[2] = pd->graphics->loadBitmap("wall.png", &err);
+        bitmaps[3] = pd->graphics->loadBitmap("doorh.png", &err);
+        bitmaps[4] = pd->graphics->loadBitmap("doorv.png", &err);
         // TODO: handle error like the above font loading
-        bitmap_count = 3;
+        bitmap_count = 5;
 
-        populate_test_room();
+        populate_level();
+
         camera_offset.x = default_camera_offset.x - (entities[player_entity_idx].position_px.x);
         camera_offset.y = default_camera_offset.y - (entities[player_entity_idx].position_px.y);
 
@@ -163,7 +205,6 @@ static int update(void* userdata)
 
 	PlaydateAPI* pd = userdata;
 
-    Room_t *room = (Room_t *)room_buff;
     char text_buff[32] = {0};
 
     // get input
@@ -209,10 +250,42 @@ static int update(void* userdata)
             coll_tiles[3].x = (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX;
             coll_tiles[3].y = (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX;
 
-            if (tile_type_at_pos(room, coll_tiles[0].x, coll_tiles[0].y) != 1
-             && tile_type_at_pos(room, coll_tiles[1].x, coll_tiles[1].y) != 1
-             && tile_type_at_pos(room, coll_tiles[2].x, coll_tiles[2].y) != 1
-             && tile_type_at_pos(room, coll_tiles[3].x, coll_tiles[3].y) != 1)
+            uint8_t coll_type = 0;
+            Vector2_t coll_tile = {0};
+
+            for (int i = 0; i < 4; i++)
+            {
+                uint8_t coll = tile_type_at_pos(current_room, coll_tiles[i].x, coll_tiles[i].y);
+
+                if (coll > coll_type)
+                {
+                    coll_type = coll;
+                    coll_tile = coll_tiles[i];
+                }
+            }
+
+            if (coll_type == 2)
+            {
+                if (coll_tile.x == 0)
+                {
+                    current_room_idx -= 1;
+                }
+                else if (coll_tile.x == ROOM_WIDTH - 1)
+                {
+                    current_room_idx += 1;
+                }
+                else if (coll_tile.y == 0)
+                {
+                    current_room_idx -= LEVEL_WIDTH;
+                }
+                else if (coll_tile.y == ROOM_HEIGHT - 1)
+                {
+                    current_room_idx += LEVEL_WIDTH;
+                }
+
+                current_room = &level.rooms[current_room_idx];
+            }
+            else if (coll_type != 1)
             {
                 player->position_px = new_pos;
 
@@ -229,32 +302,35 @@ static int update(void* userdata)
 	pd->graphics->setFont(font);
 	pd->graphics->drawText("Hello World!", strlen("Hello World!"), kASCIIEncoding, text_x, text_y);
 
-    snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[0].x, coll_tiles[0].y);
-    pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 16);
-    snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[1].x, coll_tiles[1].y);
-    pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 32);
-    snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[2].x, coll_tiles[2].y);
-    pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 32);
-    snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[3].x, coll_tiles[3].y);
-    pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 16);
-
-    for (int x = 0; x < room->width; x++)
+    if (current_room != NULL)
     {
-        for (int y = 0; y < room->height; y++)
+        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[0].x, coll_tiles[0].y);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 16);
+        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[1].x, coll_tiles[1].y);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 32);
+        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[2].x, coll_tiles[2].y);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 32);
+        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[3].x, coll_tiles[3].y);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 16);
+
+        for (int x = 0; x < ROOM_WIDTH; x++)
         {
-            Tile_t *tile = room->tiles+(x + (room->width * y));
-            draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + camera_offset.x;
-            draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + camera_offset.y;
-            pd->graphics->drawBitmap(bitmaps[tile->bitmap_idx],
-                    draw_pos.x, draw_pos.y, kBitmapUnflipped);
+            for (int y = 0; y < ROOM_HEIGHT; y++)
+            {
+                Tile_t *tile = current_room->tiles+(x + (ROOM_WIDTH * y));
+                draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + camera_offset.x;
+                draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + camera_offset.y;
+                pd->graphics->drawBitmap(bitmaps[tile->bitmap_idx],
+                        draw_pos.x, draw_pos.y, kBitmapUnflipped);
+            }
         }
-    }
 
-    for (int i = 0; i < entity_count; i++)
-    {
-        draw_pos.x = TILE_OFFSET_PX + entities[i].position_px.x + camera_offset.x;
-        draw_pos.y = TILE_OFFSET_PX + entities[i].position_px.y + camera_offset.y;
-        pd->graphics->drawBitmap(bitmaps[entities[i].bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+        for (int i = 0; i < entity_count; i++)
+        {
+            draw_pos.x = TILE_OFFSET_PX + entities[i].position_px.x + camera_offset.x;
+            draw_pos.y = TILE_OFFSET_PX + entities[i].position_px.y + camera_offset.y;
+            pd->graphics->drawBitmap(bitmaps[entities[i].bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+        }
     }
 
 	text_x += dx;
