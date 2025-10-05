@@ -34,6 +34,7 @@ typedef struct Tile
 
 typedef struct Room
 {
+    Vector2_t coord;
     Tile_t tiles[ROOM_WIDTH*ROOM_HEIGHT];
 } Room_t;
 
@@ -86,6 +87,8 @@ static uint8_t tile_type_at_pos(Room_t *room, int tile_x, int tile_y)
 static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 {
     Room_t *room = level.rooms + level_x + (level_y * LEVEL_WIDTH);
+    room->coord.x = level_x;
+    room->coord.y = level_y;
     // randomly place walls in level
     uint16_t max_walls = (ROOM_WIDTH * ROOM_HEIGHT) / 2;
     uint16_t walls_count = 0;
@@ -96,7 +99,7 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     {
         for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            Tile_t *tile = current_room->tiles+(x + (ROOM_HEIGHT * y));
+            Tile_t *tile = room->tiles+(x + (ROOM_HEIGHT * y));
 
             if (x == 0 || y == 0 || x == ROOM_WIDTH - 1 || y == ROOM_HEIGHT - 1)
             {
@@ -201,6 +204,7 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
 static int update(void* userdata)
 {
+    static uint8_t prev_coll_type = 0;
     static Vector2_t coll_tiles[4] = {0};
 
 	PlaydateAPI* pd = userdata;
@@ -264,34 +268,45 @@ static int update(void* userdata)
                 }
             }
 
-            if (coll_type == 2)
+            if (coll_type == 2 && prev_coll_type != 2)
             {
                 if (coll_tile.x == 0)
                 {
                     current_room_idx -= 1;
+                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH - 1);
+                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT / 2);
                 }
                 else if (coll_tile.x == ROOM_WIDTH - 1)
                 {
                     current_room_idx += 1;
+                    new_pos.x = TILE_SIZE_PX * (0);
+                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT / 2);
                 }
                 else if (coll_tile.y == 0)
                 {
                     current_room_idx -= LEVEL_WIDTH;
+                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH / 2);
+                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT -1);
                 }
                 else if (coll_tile.y == ROOM_HEIGHT - 1)
                 {
                     current_room_idx += LEVEL_WIDTH;
+                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH / 2);
+                    new_pos.y = TILE_SIZE_PX * (0);
                 }
 
                 current_room = &level.rooms[current_room_idx];
             }
-            else if (coll_type != 1)
+
+            if (coll_type != 1)
             {
                 player->position_px = new_pos;
 
                 camera_offset.x = default_camera_offset.x - (entities[player_entity_idx].position_px.x);
                 camera_offset.y = default_camera_offset.y - (entities[player_entity_idx].position_px.y);
             }
+
+            prev_coll_type = coll_type;
         }
     }
 	
@@ -312,6 +327,8 @@ static int update(void* userdata)
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 32);
         snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[3].x, coll_tiles[3].y);
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 16);
+        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", current_room->coord.x, current_room->coord.y);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
 
         for (int x = 0; x < ROOM_WIDTH; x++)
         {
