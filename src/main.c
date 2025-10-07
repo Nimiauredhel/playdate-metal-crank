@@ -11,8 +11,20 @@
 
 #define LEVEL_WIDTH (16)
 #define LEVEL_HEIGHT (16)
+#define LEVEL_MIN_X (0)
+#define LEVEL_MIN_Y (0)
+#define LEVEL_MAX_X (LEVEL_WIDTH-1)
+#define LEVEL_MAX_Y (LEVEL_HEIGHT-1)
+
 #define ROOM_WIDTH (16)
 #define ROOM_HEIGHT (16)
+#define ROOM_MIN_X (0)
+#define ROOM_MIN_Y (0)
+#define ROOM_MAX_X (ROOM_WIDTH-1)
+#define ROOM_MAX_Y (ROOM_HEIGHT-1)
+
+#define ROOM_MID_X (ROOM_WIDTH/2)
+#define ROOM_MID_Y (ROOM_HEIGHT/2)
 
 #define ENTITIES_GLOBAL_MAX (16)
 #define ENTITIES_LOCAL_MAX (4)
@@ -79,7 +91,7 @@ typedef struct SerializableState
 
     uint8_t global_entity_count;
     int8_t player_entity_idx;
-    GlobalEntity_t global_entities[ENTITIES_LOCAL_MAX];
+    GlobalEntity_t global_entities[ENTITIES_GLOBAL_MAX];
 } SerializableState_t;
 
 typedef struct EphemeralState
@@ -108,6 +120,7 @@ static const char* fontpath = "/System/Fonts/Asheville-Sans-14-Bold.pft";
 static const int mov_speed = 3;
 static const Vector2_t default_camera_offset = { 200, 120 };
 
+static PlaydateAPI *pd_s = NULL;
 static SerializableState_t ser = {0};
 static EphemeralState_t eph = {0};
 
@@ -117,12 +130,15 @@ __declspec(dllexport)
 
 static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
 {
-    if (tile_x < 0 || tile_y < 0) return 1;
+    if (tile_x < ROOM_MIN_X || tile_x > ROOM_MAX_X
+     || tile_y < ROOM_MIN_Y || tile_y > ROOM_MAX_Y) return 0;
     return room->tiles[tile_x + (tile_y * ROOM_WIDTH)].flags;
 }
 
 static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 {
+    pd_s->system->logToConsole("Populating room [%d,%d].", level_x, level_y);
+
     uint16_t level_idx = level_x + (level_y * LEVEL_WIDTH);
     Room_t *room = ser.level.rooms + level_idx;
     room->coord.x = level_x;
@@ -137,44 +153,55 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     {
         for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            Tile_t *tile = room->tiles+(x + (ROOM_HEIGHT * y));
+            Tile_t *tile = room->tiles+(x + (ROOM_WIDTH * y));
 
-            if (x == 0 || y == 0 || x == ROOM_WIDTH - 1 || y == ROOM_HEIGHT - 1)
+             /**
+             * All fields are expected to be zero-initialized and adhere to zero-as-default,
+             * which should have the same effect as if this code were here:
+             *
+             * tile->bitmap_idx = BITMAP_WALL;
+             * tile->flags = TILEFLAG_NONE;
+             *
+             * TODO: create room generation tests to enforce this assumption.
+             **/
+
+            // left/right doors
+            if ((x == ROOM_MID_X)
+                && ((y == 0 && level_y > 0)
+                ||  (y == ROOM_MAX_Y && level_y < LEVEL_MAX_Y)))
             {
-                if (x == ROOM_WIDTH/2)
+                tile->bitmap_idx = BITMAP_DOOR_V;
+                tile->flags |= (TILEFLAG_DOOR_V | TILEFLAG_WALKABLE);
+            }
+            // up/down doors
+            else if ((y == ROOM_MID_Y)
+                && ((x == 0 && level_x > 0)
+                ||  (x == ROOM_MAX_X && level_x < LEVEL_MAX_X)))
+            {
+                tile->bitmap_idx = BITMAP_DOOR_H;
+                tile->flags |= (TILEFLAG_DOOR_H | TILEFLAG_WALKABLE);
+            }
+            else if (x > ROOM_MIN_X && x < ROOM_MAX_X
+                    && y > ROOM_MIN_Y && y < ROOM_MAX_Y)
+            {
+                if(walls_count < max_walls && (rand() % 100) > 70)
                 {
-                    tile->bitmap_idx = BITMAP_DOOR_V;
-                    tile->flags |= (TILEFLAG_DOOR_V | TILEFLAG_WALKABLE);
-                }
-                else if (y == ROOM_HEIGHT/2)
-                {
-                    tile->bitmap_idx = BITMAP_DOOR_H;
-                    tile->flags |= (TILEFLAG_DOOR_H | TILEFLAG_WALKABLE);
-                }
-                else
-                {
+                    walls_count++;
                     // nothing to set since unwalkable wall == 0, 0
                     //tile->bitmap_idx = 0;
                     //tile->type_idx = 1;
                 }
-            }
-            else if(walls_count < max_walls && (rand() % 100) > 70)
-            {
-                walls_count++;
-                // nothing to set since unwalkable wall == 0, 0
-                //tile->bitmap_idx = 0;
-                //tile->type_idx = 1;
-            }
-            else
-            {
-                tile->bitmap_idx = BITMAP_FLOOR;
-                tile->flags |= TILEFLAG_WALKABLE;
-
-                if (player_start && (!placed_player || (rand() % 100) > 80))
+                else
                 {
-                    player_coord.x = x;
-                    player_coord.y = y;
-                    placed_player = true;
+                    tile->bitmap_idx = BITMAP_FLOOR;
+                    tile->flags |= TILEFLAG_WALKABLE;
+
+                    if (player_start && (!placed_player || (rand() % 100) > 80))
+                    {
+                        player_coord.x = x;
+                        player_coord.y = y;
+                        placed_player = true;
+                    }
                 }
             }
         }
@@ -183,6 +210,7 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     if (player_start && eph.player_ptr != NULL)
     {
         // place player
+        eph.player_ptr->current_room_idx = level_x + (level_y * LEVEL_WIDTH);
         eph.player_ptr->entity.position_px.x = player_coord.x * TILE_SIZE_PX;
         eph.player_ptr->entity.position_px.y = player_coord.y * TILE_SIZE_PX;
         ser.current_room_idx = level_x + (level_y * LEVEL_WIDTH);
@@ -192,6 +220,7 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
 void populate_level(void)
 {
+    pd_s->system->logToConsole("Initializing level.");
     uint16_t start_x = rand() % LEVEL_WIDTH;
     uint16_t start_y = rand() % LEVEL_HEIGHT;
 
@@ -216,6 +245,9 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 	if (event == kEventInit)
 	{
 		const char* err;
+        pd_s = pd;
+
+        pd->system->logToConsole("Initializing game.");
 
         srand(pd->system->getSecondsSinceEpoch(NULL));
 
@@ -238,6 +270,10 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
             {
                 pd->system->error("%s:%i Couldn't load bitmap %s: %s", __FILE__, __LINE__, bitmap_paths[i], err);
             }
+            else
+            {
+                pd->system->logToConsole("Loaded bitmap [%s] to index [%d].", bitmap_paths[i], i);
+            }
         }
 
         populate_level();
@@ -254,7 +290,7 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
 static int update(void* userdata)
 {
-    static TileFlags_t prev_tile_flags = 0;
+    static TileFlags_t prev_tile_flags = TILEFLAG_NONE;
     static Vector2_t coll_tiles[4] = {0};
 
 	PlaydateAPI* pd = userdata;
@@ -303,54 +339,59 @@ static int update(void* userdata)
             coll_tiles[3].x = (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX;
             coll_tiles[3].y = (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX;
 
-            uint8_t tile_flags = 0;
+            TileFlags_t tile_flags = TILEFLAG_NONE;
             Vector2_t coll_tile = {0};
 
-            for (int i = 0; i < 4; i++)
+            for (uint8_t i = 0; i < 4; i++)
             {
-                tile_flags = tile_flags_at_pos(eph.current_room_ptr, coll_tiles[i].x, coll_tiles[i].y);
+                coll_tile = coll_tiles[i];
+                tile_flags = tile_flags_at_pos(eph.current_room_ptr, coll_tile.x, coll_tile.y);
 
-                if (tile_flags != prev_tile_flags)
+                if (!(tile_flags & TILEFLAG_WALKABLE))
                 {
-                    coll_tile = coll_tiles[i];
                     break;
                 }
+                else if (tile_flags & TILEFLAG_DOOR_H)
+                {
+                    new_pos.y = TILE_SIZE_PX * ROOM_MID_Y;
+
+                    if (coll_tile.x == ROOM_MIN_X)
+                    {
+                        ser.current_room_idx -= 1;
+                        new_pos.x = TILE_SIZE_PX * (ROOM_MAX_X - 1);
+                    }
+                    else if (coll_tile.x == ROOM_MAX_X)
+                    {
+                        ser.current_room_idx += 1;
+                        new_pos.x = TILE_SIZE_PX * (ROOM_MIN_X + 1);
+                    }
+
+                    eph.player_ptr->current_room_idx = ser.current_room_idx;
+                    eph.current_room_ptr = ser.level.rooms+ser.current_room_idx;
+                }
+                else if (tile_flags & TILEFLAG_DOOR_V)
+                {
+                    new_pos.x = TILE_SIZE_PX * ROOM_MID_X;
+
+                    if (coll_tile.y == ROOM_MIN_Y)
+                    {
+                        ser.current_room_idx -= LEVEL_WIDTH;
+                        new_pos.y = TILE_SIZE_PX * (ROOM_MAX_Y - 1);
+                    }
+                    else if (coll_tile.y == ROOM_MAX_Y)
+                    {
+                        ser.current_room_idx += LEVEL_WIDTH;
+                        new_pos.y = TILE_SIZE_PX * (ROOM_MIN_Y + 1);
+                    }
+
+                    eph.player_ptr->current_room_idx = ser.current_room_idx;
+                    eph.current_room_ptr = ser.level.rooms+ser.current_room_idx;
+                }
             }
 
-            if (tile_flags == 2 && prev_tile_flags != 2)
-            {
-                if (coll_tile.x == 0)
-                {
-                    ser.current_room_idx -= 1;
-                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH - 1);
-                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT / 2);
-                }
-                else if (coll_tile.x == ROOM_WIDTH - 1)
-                {
-                    ser.current_room_idx += 1;
-                    new_pos.x = TILE_SIZE_PX * (0);
-                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT / 2);
-                }
-                else if (coll_tile.y == 0)
-                {
-                    ser.current_room_idx -= LEVEL_WIDTH;
-                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH / 2);
-                    new_pos.y = TILE_SIZE_PX * (ROOM_HEIGHT -1);
-                }
-                else if (coll_tile.y == ROOM_HEIGHT - 1)
-                {
-                    ser.current_room_idx += LEVEL_WIDTH;
-                    new_pos.x = TILE_SIZE_PX * (ROOM_WIDTH / 2);
-                    new_pos.y = TILE_SIZE_PX * (0);
-                }
-
-                eph.current_room_ptr = ser.level.rooms+ser.current_room_idx;
-            }
-
-            if (tile_flags != 1)
+            if (tile_flags & (TILEFLAG_WALKABLE | TILEFLAG_DOOR_H | TILEFLAG_DOOR_V))
             {
                 eph.player_ptr->entity.position_px = new_pos;
-
                 eph.camera_offset.x = default_camera_offset.x - eph.player_ptr->entity.position_px.x;
                 eph.camera_offset.y = default_camera_offset.y - eph.player_ptr->entity.position_px.y;
             }
