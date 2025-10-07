@@ -128,6 +128,20 @@ static EphemeralState_t eph = {0};
 __declspec(dllexport)
 #endif
 
+static void set_player_room(uint16_t room_idx)
+{
+    if (eph.player_ptr == NULL) return;
+    pd_s->system->logToConsole("Moving player to room #%d.", room_idx);
+    eph.player_ptr->current_room_idx = room_idx;
+}
+
+static void set_current_room(uint16_t room_idx)
+{
+    pd_s->system->logToConsole("Setting current room to #%d.", room_idx);
+    ser.current_room_idx = room_idx;
+    eph.current_room_ptr = ser.level.rooms+room_idx;
+}
+
 static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
 {
     if (tile_x < ROOM_MIN_X || tile_x > ROOM_MAX_X
@@ -210,11 +224,11 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     if (player_start && eph.player_ptr != NULL)
     {
         // place player
-        eph.player_ptr->current_room_idx = level_x + (level_y * LEVEL_WIDTH);
+        uint16_t room_idx = level_x + (level_y * LEVEL_WIDTH);
         eph.player_ptr->entity.position_px.x = player_coord.x * TILE_SIZE_PX;
         eph.player_ptr->entity.position_px.y = player_coord.y * TILE_SIZE_PX;
-        ser.current_room_idx = level_x + (level_y * LEVEL_WIDTH);
-        eph.current_room_ptr = room;
+        set_player_room(room_idx);
+        set_current_room(room_idx);
     }
 }
 
@@ -351,41 +365,43 @@ static int update(void* userdata)
                 {
                     break;
                 }
-                else if (tile_flags & TILEFLAG_DOOR_H)
+                else if (tile_flags & TILEFLAG_DOOR_H
+                        && tile_flags != prev_tile_flags)
                 {
                     new_pos.y = TILE_SIZE_PX * ROOM_MID_Y;
 
                     if (coll_tile.x == ROOM_MIN_X)
                     {
-                        ser.current_room_idx -= 1;
+                        set_current_room(ser.current_room_idx - 1);
                         new_pos.x = TILE_SIZE_PX * (ROOM_MAX_X - 1);
                     }
                     else if (coll_tile.x == ROOM_MAX_X)
                     {
-                        ser.current_room_idx += 1;
+                        set_current_room(ser.current_room_idx + 1);
                         new_pos.x = TILE_SIZE_PX * (ROOM_MIN_X + 1);
                     }
 
-                    eph.player_ptr->current_room_idx = ser.current_room_idx;
-                    eph.current_room_ptr = ser.level.rooms+ser.current_room_idx;
+                    set_player_room(ser.current_room_idx);
+                    break;
                 }
-                else if (tile_flags & TILEFLAG_DOOR_V)
+                else if (tile_flags & TILEFLAG_DOOR_V
+                        && tile_flags != prev_tile_flags)
                 {
                     new_pos.x = TILE_SIZE_PX * ROOM_MID_X;
 
                     if (coll_tile.y == ROOM_MIN_Y)
                     {
-                        ser.current_room_idx -= LEVEL_WIDTH;
+                        set_current_room(ser.current_room_idx - LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * (ROOM_MAX_Y - 1);
                     }
                     else if (coll_tile.y == ROOM_MAX_Y)
                     {
-                        ser.current_room_idx += LEVEL_WIDTH;
+                        set_current_room(ser.current_room_idx + LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * (ROOM_MIN_Y + 1);
                     }
 
-                    eph.player_ptr->current_room_idx = ser.current_room_idx;
-                    eph.current_room_ptr = ser.level.rooms+ser.current_room_idx;
+                    set_player_room(ser.current_room_idx);
+                    break;
                 }
             }
 
