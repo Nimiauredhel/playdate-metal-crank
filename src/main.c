@@ -16,6 +16,7 @@
 #define LEVEL_MAX_X (LEVEL_WIDTH-1)
 #define LEVEL_MAX_Y (LEVEL_HEIGHT-1)
 
+#define ROOM_COUNT (LEVEL_WIDTH*LEVEL_HEIGHT)
 #define ROOM_WIDTH (16)
 #define ROOM_HEIGHT (16)
 #define ROOM_MIN_X (0)
@@ -99,6 +100,7 @@ typedef struct EphemeralState
     PDButtons buttons_current;
     PDButtons buttons_pushed;
     PDButtons buttons_released;
+    Vector2_t camera_offset_target;
     Vector2_t camera_offset;
     GlobalEntity_t *player_ptr;
     Room_t *current_room_ptr;
@@ -117,7 +119,7 @@ static const char bitmap_paths[BITMAP_COUNT][16] =
     "doorv.png",
 };
 static const char* fontpath = "/System/Fonts/Asheville-Sans-14-Bold.pft";
-static const int mov_speed = 3;
+static const int mov_speed = 5;
 static const Vector2_t default_camera_offset = { 200, 120 };
 
 static PlaydateAPI *pd_s = NULL;
@@ -252,6 +254,47 @@ void populate_level(void)
     }
 }
 
+static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2_t offset)
+{
+    pd->system->logToConsole("Drawing room [%d,%d].", room_ptr->coord.x, room_ptr->coord.y);
+    Vector2_t draw_pos = {0};
+
+    for (int x = 0; x < ROOM_WIDTH; x++)
+    {
+        for (int y = 0; y < ROOM_HEIGHT; y++)
+        {
+            Tile_t *tile = room_ptr->tiles+(x + (ROOM_WIDTH * y));
+            draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + offset.x;
+            draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + offset.y;
+            pd->graphics->drawBitmap(eph.bitmaps[tile->bitmap_idx],
+                    draw_pos.x, draw_pos.y, kBitmapUnflipped);
+        }
+    }
+
+    Entity_t *entity = NULL;
+
+    for (uint8_t i = 0; i < room_ptr->local_entity_count; i++)
+    {
+        entity = room_ptr->entities+i;
+        draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + offset.x;
+        draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + offset.y;
+        pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+    }
+
+    uint16_t room_idx = room_ptr->coord.x + ((room_ptr->coord.y) * LEVEL_WIDTH);
+
+    for (uint8_t i = 0; i < ser.global_entity_count; i++)
+    {
+        if (ser.global_entities[i].current_room_idx == room_idx)
+        {
+            entity = &(ser.global_entities+i)->entity;
+            draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + offset.x;
+            draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + offset.y;
+            pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+        }
+    }
+}
+
 int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 {
 	(void)arg; // arg is currently only used for event = kEventKeyPressed
@@ -268,7 +311,7 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         bzero(&ser, sizeof(ser));
         bzero(&eph, sizeof(eph));
 
-        eph.camera_offset = default_camera_offset;
+        eph.camera_offset_target = default_camera_offset;
         eph.font = pd->graphics->loadFont(fontpath, &err);
 		
 		if ( eph.font == NULL )
@@ -292,8 +335,9 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
         populate_level();
 
-        eph.camera_offset.x = default_camera_offset.x - (eph.player_ptr->entity.position_px.x);
-        eph.camera_offset.y = default_camera_offset.y - (eph.player_ptr->entity.position_px.y);
+        eph.camera_offset_target.x = default_camera_offset.x - (eph.player_ptr->entity.position_px.x);
+        eph.camera_offset_target.y = default_camera_offset.y - (eph.player_ptr->entity.position_px.y);
+        eph.camera_offset = eph.camera_offset_target;
 
 		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
 		pd->system->setUpdateCallback(update, pd);
@@ -408,17 +452,33 @@ static int update(void* userdata)
             if (tile_flags & (TILEFLAG_WALKABLE | TILEFLAG_DOOR_H | TILEFLAG_DOOR_V))
             {
                 eph.player_ptr->entity.position_px = new_pos;
-                eph.camera_offset.x = default_camera_offset.x - eph.player_ptr->entity.position_px.x;
-                eph.camera_offset.y = default_camera_offset.y - eph.player_ptr->entity.position_px.y;
+                eph.camera_offset_target.x = default_camera_offset.x - eph.player_ptr->entity.position_px.x;
+                eph.camera_offset_target.y = default_camera_offset.y - eph.player_ptr->entity.position_px.y;
             }
 
             prev_tile_flags = tile_flags;
         }
+
+        if (eph.camera_offset.x > eph.camera_offset_target.x)
+        {
+            eph.camera_offset.x -= (eph.camera_offset.x - eph.camera_offset_target.x)/2;
+        }
+        else if (eph.camera_offset.x < eph.camera_offset_target.x)
+        {
+            eph.camera_offset.x += (eph.camera_offset_target.x - eph.camera_offset.x)/2;
+        }
+
+        if (eph.camera_offset.y > eph.camera_offset_target.y)
+        {
+            eph.camera_offset.y -= (eph.camera_offset.y - eph.camera_offset_target.y)/2;
+        }
+        else if (eph.camera_offset.y < eph.camera_offset_target.y)
+        {
+            eph.camera_offset.y += (eph.camera_offset_target.y - eph.camera_offset.y)/2;
+        }
     }
 	
     // draw gfx
-    Vector2_t draw_pos = {0};
-
 	pd->graphics->clear(kColorWhite);
 	pd->graphics->setFont(eph.font);
 
@@ -435,36 +495,35 @@ static int update(void* userdata)
         snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
 
-        for (int x = 0; x < ROOM_WIDTH; x++)
+        draw_room(pd, eph.current_room_ptr, eph.camera_offset);
+
+        Vector2_t room_offset;
+
+        if (ser.current_room_idx < (ROOM_COUNT-1))
         {
-            for (int y = 0; y < ROOM_HEIGHT; y++)
+            room_offset.x = eph.camera_offset.x+(ROOM_WIDTH*TILE_SIZE_PX);
+            room_offset.y = eph.camera_offset.y;
+            draw_room(pd, eph.current_room_ptr+1, room_offset);
+
+            if (ser.current_room_idx < ((ROOM_COUNT-1)-LEVEL_WIDTH))
             {
-                Tile_t *tile = eph.current_room_ptr->tiles+(x + (ROOM_WIDTH * y));
-                draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + eph.camera_offset.x;
-                draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + eph.camera_offset.y;
-                pd->graphics->drawBitmap(eph.bitmaps[tile->bitmap_idx],
-                        draw_pos.x, draw_pos.y, kBitmapUnflipped);
+                room_offset.x = eph.camera_offset.x;
+                room_offset.y = room_offset.y+(ROOM_HEIGHT*TILE_SIZE_PX);
+                draw_room(pd, eph.current_room_ptr+LEVEL_WIDTH, room_offset);
             }
         }
 
-        Entity_t *entity = NULL;
-
-        for (uint8_t i = 0; i < eph.current_room_ptr->local_entity_count; i++)
+        if (ser.current_room_idx > 0)
         {
-            entity = eph.current_room_ptr->entities+i;
-            draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + eph.camera_offset.x;
-            draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + eph.camera_offset.y;
-            pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
-        }
+            room_offset.x = eph.camera_offset.x-(ROOM_WIDTH*TILE_SIZE_PX);
+            room_offset.y = eph.camera_offset.y;
+            draw_room(pd, eph.current_room_ptr-1, room_offset);
 
-        for (uint8_t i = 0; i < ser.global_entity_count; i++)
-        {
-            if (ser.global_entities[i].current_room_idx == ser.current_room_idx)
+            if (ser.current_room_idx > LEVEL_WIDTH)
             {
-                entity = &(ser.global_entities+i)->entity;
-                draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + eph.camera_offset.x;
-                draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + eph.camera_offset.y;
-                pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+                room_offset.x = eph.camera_offset.x;
+                room_offset.y = room_offset.y-(ROOM_HEIGHT*TILE_SIZE_PX);
+                draw_room(pd, eph.current_room_ptr-LEVEL_WIDTH, room_offset);
             }
         }
     }
