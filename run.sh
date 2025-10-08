@@ -1,8 +1,8 @@
-mkdir -p build
+rm -rf build
+mkdir build
 cd build
-rm -rf bin
-mkdir -p bin
 cmake ..
 cmake --build .
+mkdir -p bin
 mv ../metal_crank.pdx bin/metal_crank.pdx
 PlaydateSimulator bin/metal_crank.pdx

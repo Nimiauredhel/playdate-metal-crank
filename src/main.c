@@ -256,7 +256,6 @@ void populate_level(void)
 
 static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2_t offset)
 {
-    pd->system->logToConsole("Drawing room [%d,%d].", room_ptr->coord.x, room_ptr->coord.y);
     Vector2_t draw_pos = {0};
 
     for (int x = 0; x < ROOM_WIDTH; x++)
@@ -349,7 +348,6 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 static int update(void* userdata)
 {
     static TileFlags_t prev_tile_flags = TILEFLAG_NONE;
-    static Vector2_t coll_tiles[4] = {0};
 
 	PlaydateAPI* pd = userdata;
 
@@ -385,63 +383,69 @@ static int update(void* userdata)
 
         if (mov_delta.x != 0 || mov_delta.y != 0)
         {
-            Vector2_t new_pos = { eph.player_ptr->entity.position_px.x + mov_delta.x, eph.player_ptr->entity.position_px.y + mov_delta.y };
+            Vector2_t current_pos = { eph.player_ptr->entity.position_px.x, eph.player_ptr->entity.position_px.y };
+            Vector2_t new_pos = { current_pos.x + mov_delta.x, current_pos.y + mov_delta.y };
             Vector2_t new_offset_pos = { new_pos.x + TILE_OFFSET_PX, new_pos.y + TILE_OFFSET_PX };
 
-            coll_tiles[0].x = (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[0].y = (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[1].x = (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[1].y = (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[2].x = (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[2].y = (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[3].x = (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX;
-            coll_tiles[3].y = (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX;
+            Vector2_t eval_coll_tiles[4] =
+            {
+                { (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX },
+            };
+            TileFlags_t eval_tile_flags[4] =
+            {
+                tile_flags_at_pos(eph.current_room_ptr, eval_coll_tiles[0].x, eval_coll_tiles[0].y),
+                tile_flags_at_pos(eph.current_room_ptr, eval_coll_tiles[1].x, eval_coll_tiles[1].y),
+                tile_flags_at_pos(eph.current_room_ptr, eval_coll_tiles[2].x, eval_coll_tiles[2].y),
+                tile_flags_at_pos(eph.current_room_ptr, eval_coll_tiles[3].x, eval_coll_tiles[3].y),
+            };
 
+            TileFlags_t sum_tile_flags = eval_tile_flags[0] | eval_tile_flags[1] | eval_tile_flags[2] | eval_tile_flags[3];
             TileFlags_t tile_flags = TILEFLAG_NONE;
             Vector2_t coll_tile = {0};
 
             for (uint8_t i = 0; i < 4; i++)
             {
-                coll_tile = coll_tiles[i];
-                tile_flags = tile_flags_at_pos(eph.current_room_ptr, coll_tile.x, coll_tile.y);
+                coll_tile = eval_coll_tiles[i];
+                tile_flags = eval_tile_flags[i];
 
+                // if a non-walkable tile is touched, the below (position-changing) flags do not apply
+                // if applicable flags are added later, they should be tested above this one
                 if (!(tile_flags & TILEFLAG_WALKABLE))
                 {
                     break;
                 }
                 else if (tile_flags & TILEFLAG_DOOR_H
-                        && tile_flags != prev_tile_flags)
+                        && ((new_pos.x >= (ROOM_MAX_X * TILE_SIZE_PX) || new_pos.x <= (ROOM_MIN_X * TILE_SIZE_PX))))
                 {
-                    new_pos.y = TILE_SIZE_PX * ROOM_MID_Y;
-
                     if (coll_tile.x == ROOM_MIN_X)
                     {
                         set_current_room(ser.current_room_idx - 1);
-                        new_pos.x = TILE_SIZE_PX * (ROOM_MAX_X - 1);
+                        new_pos.x = TILE_SIZE_PX * ROOM_MAX_X;
                     }
                     else if (coll_tile.x == ROOM_MAX_X)
                     {
                         set_current_room(ser.current_room_idx + 1);
-                        new_pos.x = TILE_SIZE_PX * (ROOM_MIN_X + 1);
+                        new_pos.x = TILE_SIZE_PX * ROOM_MIN_X;
                     }
 
                     set_player_room(ser.current_room_idx);
                     break;
                 }
                 else if (tile_flags & TILEFLAG_DOOR_V
-                        && tile_flags != prev_tile_flags)
+                        && ((new_pos.y >= (ROOM_MAX_Y * TILE_SIZE_PX) || new_pos.y <= (ROOM_MIN_Y * TILE_SIZE_PX))))
                 {
-                    new_pos.x = TILE_SIZE_PX * ROOM_MID_X;
-
                     if (coll_tile.y == ROOM_MIN_Y)
                     {
                         set_current_room(ser.current_room_idx - LEVEL_WIDTH);
-                        new_pos.y = TILE_SIZE_PX * (ROOM_MAX_Y - 1);
+                        new_pos.y = TILE_SIZE_PX * ROOM_MAX_Y;
                     }
                     else if (coll_tile.y == ROOM_MAX_Y)
                     {
                         set_current_room(ser.current_room_idx + LEVEL_WIDTH);
-                        new_pos.y = TILE_SIZE_PX * (ROOM_MIN_Y + 1);
+                        new_pos.y = TILE_SIZE_PX * ROOM_MIN_Y;
                     }
 
                     set_player_room(ser.current_room_idx);
@@ -449,14 +453,19 @@ static int update(void* userdata)
                 }
             }
 
-            if (tile_flags & (TILEFLAG_WALKABLE | TILEFLAG_DOOR_H | TILEFLAG_DOOR_V))
+            if (tile_flags & TILEFLAG_WALKABLE)
             {
                 eph.player_ptr->entity.position_px = new_pos;
                 eph.camera_offset_target.x = default_camera_offset.x - eph.player_ptr->entity.position_px.x;
                 eph.camera_offset_target.y = default_camera_offset.y - eph.player_ptr->entity.position_px.y;
+
+                if (tile_flags & (TILEFLAG_DOOR_H | TILEFLAG_DOOR_V))
+                {
+                    eph.camera_offset = eph.camera_offset_target;
+                }
             }
 
-            prev_tile_flags = tile_flags;
+            prev_tile_flags = sum_tile_flags;
         }
 
         if (eph.camera_offset.x > eph.camera_offset_target.x)
@@ -484,14 +493,6 @@ static int update(void* userdata)
 
     if (eph.current_room_ptr != NULL)
     {
-        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[0].x, coll_tiles[0].y);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 16);
-        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[1].x, coll_tiles[1].y);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 32);
-        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[2].x, coll_tiles[2].y);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 4, 32);
-        snprintf(text_buff, sizeof(text_buff), "[%d,%d]", coll_tiles[3].x, coll_tiles[3].y);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 40, 16);
         snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
 
