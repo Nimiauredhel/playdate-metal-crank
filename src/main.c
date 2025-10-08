@@ -119,7 +119,7 @@ static const char bitmap_paths[BITMAP_COUNT][16] =
     "doorv.png",
 };
 static const char* fontpath = "/System/Fonts/Asheville-Sans-14-Bold.pft";
-static const int mov_speed = 5;
+static const int mov_speed = 200;
 static const Vector2_t default_camera_offset = { 200, 120 };
 
 static PlaydateAPI *pd_s = NULL;
@@ -334,12 +334,14 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
         populate_level();
 
-        eph.camera_offset_target.x = default_camera_offset.x - (eph.player_ptr->entity.position_px.x);
-        eph.camera_offset_target.y = default_camera_offset.y - (eph.player_ptr->entity.position_px.y);
+        eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
+        eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
         eph.camera_offset = eph.camera_offset_target;
 
+        pd->display->setRefreshRate(50);
 		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
 		pd->system->setUpdateCallback(update, pd);
+        pd->system->resetElapsedTime();
 	}
 	
 	return 0;
@@ -347,9 +349,10 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
 static int update(void* userdata)
 {
-    static TileFlags_t prev_tile_flags = TILEFLAG_NONE;
-
 	PlaydateAPI* pd = userdata;
+
+    float deltaTime = pd->system->getElapsedTime();
+    pd->system->resetElapsedTime();
 
     char text_buff[32] = {0};
 
@@ -363,22 +366,22 @@ static int update(void* userdata)
 
         if (eph.buttons_current & kButtonLeft)
         {
-            mov_delta.x -= mov_speed;
+            mov_delta.x -= mov_speed * deltaTime;
         }
 
         if (eph.buttons_current & kButtonRight)
         {
-            mov_delta.x += mov_speed;
+            mov_delta.x += mov_speed * deltaTime;
         }
 
         if (eph.buttons_current & kButtonUp)
         {
-            mov_delta.y -= mov_speed;
+            mov_delta.y -= mov_speed * deltaTime;
         }
 
         if (eph.buttons_current & kButtonDown)
         {
-            mov_delta.y += mov_speed;
+            mov_delta.y += mov_speed * deltaTime;
         }
 
         if (mov_delta.x != 0 || mov_delta.y != 0)
@@ -402,7 +405,7 @@ static int update(void* userdata)
                 tile_flags_at_pos(eph.current_room_ptr, eval_coll_tiles[3].x, eval_coll_tiles[3].y),
             };
 
-            TileFlags_t sum_tile_flags = eval_tile_flags[0] | eval_tile_flags[1] | eval_tile_flags[2] | eval_tile_flags[3];
+            //TileFlags_t sum_tile_flags = eval_tile_flags[0] | eval_tile_flags[1] | eval_tile_flags[2] | eval_tile_flags[3];
             TileFlags_t tile_flags = TILEFLAG_NONE;
             Vector2_t coll_tile = {0};
 
@@ -424,11 +427,13 @@ static int update(void* userdata)
                     {
                         set_current_room(ser.current_room_idx - 1);
                         new_pos.x = TILE_SIZE_PX * ROOM_MAX_X;
+                        eph.camera_offset.x = (default_camera_offset.x - (TILE_SIZE_PX * ROOM_MAX_X) - TILE_SIZE_PX);
                     }
                     else if (coll_tile.x == ROOM_MAX_X)
                     {
                         set_current_room(ser.current_room_idx + 1);
                         new_pos.x = TILE_SIZE_PX * ROOM_MIN_X;
+                        eph.camera_offset.x = (default_camera_offset.x - (TILE_SIZE_PX * ROOM_MIN_X) - TILE_SIZE_PX);
                     }
 
                     set_player_room(ser.current_room_idx);
@@ -441,11 +446,13 @@ static int update(void* userdata)
                     {
                         set_current_room(ser.current_room_idx - LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * ROOM_MAX_Y;
+                        eph.camera_offset.y = (default_camera_offset.y - (TILE_SIZE_PX * ROOM_MAX_Y) - TILE_SIZE_PX);
                     }
                     else if (coll_tile.y == ROOM_MAX_Y)
                     {
                         set_current_room(ser.current_room_idx + LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * ROOM_MIN_Y;
+                        eph.camera_offset.y = (default_camera_offset.y - (TILE_SIZE_PX * ROOM_MIN_Y) - TILE_SIZE_PX);
                     }
 
                     set_player_room(ser.current_room_idx);
@@ -456,34 +463,29 @@ static int update(void* userdata)
             if (tile_flags & TILEFLAG_WALKABLE)
             {
                 eph.player_ptr->entity.position_px = new_pos;
-                eph.camera_offset_target.x = default_camera_offset.x - eph.player_ptr->entity.position_px.x;
-                eph.camera_offset_target.y = default_camera_offset.y - eph.player_ptr->entity.position_px.y;
-
-                if (tile_flags & (TILEFLAG_DOOR_H | TILEFLAG_DOOR_V))
-                {
-                    eph.camera_offset = eph.camera_offset_target;
-                }
+                eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
+                eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
             }
-
-            prev_tile_flags = sum_tile_flags;
         }
+
+        float camera_follow_speed = 6.5f * deltaTime;
 
         if (eph.camera_offset.x > eph.camera_offset_target.x)
         {
-            eph.camera_offset.x -= (eph.camera_offset.x - eph.camera_offset_target.x)/2;
+            eph.camera_offset.x -= (eph.camera_offset.x - eph.camera_offset_target.x) * camera_follow_speed;
         }
         else if (eph.camera_offset.x < eph.camera_offset_target.x)
         {
-            eph.camera_offset.x += (eph.camera_offset_target.x - eph.camera_offset.x)/2;
+            eph.camera_offset.x += (eph.camera_offset_target.x - eph.camera_offset.x) * camera_follow_speed;
         }
 
         if (eph.camera_offset.y > eph.camera_offset_target.y)
         {
-            eph.camera_offset.y -= (eph.camera_offset.y - eph.camera_offset_target.y)/2;
+            eph.camera_offset.y -= (eph.camera_offset.y - eph.camera_offset_target.y) * camera_follow_speed;
         }
         else if (eph.camera_offset.y < eph.camera_offset_target.y)
         {
-            eph.camera_offset.y += (eph.camera_offset_target.y - eph.camera_offset.y)/2;
+            eph.camera_offset.y += (eph.camera_offset_target.y - eph.camera_offset.y) * camera_follow_speed;
         }
     }
 	
