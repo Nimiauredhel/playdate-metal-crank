@@ -48,15 +48,28 @@ typedef enum TileFlags
     TILEFLAG_DOOR_V = 0x04,
 } TileFlags_t;
 
-typedef struct Vector2
+typedef struct Vector2Int
 {
     int x;
     int y;
+} Vector2Int_t;
+
+typedef struct Vector2
+{
+    float x;
+    float y;
 } Vector2_t;
+
+typedef struct Vector3
+{
+    float x;
+    float y;
+    float z;
+} Vector3_t;
 
 typedef struct Entity
 {
-    Vector2_t position_px;
+    Vector2Int_t position_px;
     int bitmap_idx;
 } Entity_t;
 
@@ -74,7 +87,7 @@ typedef struct Tile
 
 typedef struct Room
 {
-    Vector2_t coord;
+    Vector2Int_t coord;
     Tile_t tiles[ROOM_WIDTH*ROOM_HEIGHT];
     uint8_t local_entity_count;
     Entity_t entities[ENTITIES_LOCAL_MAX];
@@ -100,8 +113,13 @@ typedef struct EphemeralState
     PDButtons buttons_current;
     PDButtons buttons_pushed;
     PDButtons buttons_released;
-    Vector2_t camera_offset_target;
-    Vector2_t camera_offset;
+    Vector3_t accelerometer_center;
+    Vector3_t accelerometer_raw;
+    Vector2_t crank;
+    Vector2Int_t camera_offset_target;
+    Vector2Int_t camera_offset;
+    Vector2Int_t camera_peek_offset;
+    Vector2Int_t mov_speed;
     GlobalEntity_t *player_ptr;
     Room_t *current_room_ptr;
     LCDFont* font;
@@ -119,8 +137,11 @@ static const char bitmap_paths[BITMAP_COUNT][16] =
     "doorv.png",
 };
 static const char* fontpath = "/System/Fonts/Asheville-Sans-14-Bold.pft";
-static const int mov_speed = 200;
-static const Vector2_t default_camera_offset = { 200, 120 };
+static const int mov_accel_min = 15;
+static const int mov_accel_max = 30;
+static const int mov_speed_min = 125;
+static const int mov_speed_max = 250;
+static const Vector2Int_t default_camera_offset = { 200, 120 };
 
 static PlaydateAPI *pd_s = NULL;
 static SerializableState_t ser = {0};
@@ -129,6 +150,11 @@ static EphemeralState_t eph = {0};
 #ifdef _WINDLL
 __declspec(dllexport)
 #endif
+
+static int8_t sign(int num)
+{
+    return (num > 0) - (num < 0);
+}
 
 static void set_player_room(uint16_t room_idx)
 {
@@ -163,7 +189,7 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     uint16_t max_walls = (ROOM_WIDTH * ROOM_HEIGHT) / 2;
     uint16_t walls_count = 0;
     bool placed_player = false;
-    Vector2_t player_coord = {0};
+    Vector2Int_t player_coord = {0};
 
     for (int x = 0; x < ROOM_WIDTH; x++)
     {
@@ -254,9 +280,9 @@ void populate_level(void)
     }
 }
 
-static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2_t offset)
+static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
 {
-    Vector2_t draw_pos = {0};
+    Vector2Int_t draw_pos = {0};
 
     for (int x = 0; x < ROOM_WIDTH; x++)
     {
@@ -305,6 +331,7 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 
         pd->system->logToConsole("Initializing game.");
 
+        pd->system->setPeripheralsEnabled(kAccelerometer);
         srand(pd->system->getSecondsSinceEpoch(NULL));
 
         bzero(&ser, sizeof(ser));
@@ -358,39 +385,70 @@ static int update(void* userdata)
 
     // get input
     pd->system->getButtonState(&eph.buttons_current, &eph.buttons_pushed, &eph.buttons_released);
+    eph.crank.x = pd->system->getCrankAngle();
+    eph.crank.y = pd->system->getCrankChange();
+    pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
+
+    // if crank is moving, calibrate accelerometer
+    if (eph.crank.y != 0)
+    {
+        memcpy(&eph.accelerometer_center, &eph.accelerometer_raw, sizeof(Vector3_t));
+    }
+
+    eph.camera_peek_offset.x = (eph.accelerometer_raw.x - eph.accelerometer_center.x) * TILE_SIZE_PX;
+    eph.camera_peek_offset.y = (eph.accelerometer_raw.y - eph.accelerometer_center.y) * TILE_SIZE_PX;
 
     // process input
     if (eph.player_ptr != NULL)
     {
-        Vector2_t mov_delta = {0};
+        Vector2Int_t mov_delta = {0};
+        float crank_value = powf(eph.crank.y, 2) * deltaTime;
 
-        if (eph.buttons_current & kButtonLeft)
+        int target_speed = mov_speed_min + ((mov_speed_max - mov_speed_min) * crank_value);
+        int mov_accel_val = mov_accel_min + ((mov_accel_max - mov_accel_min) * crank_value);
+
+        if (target_speed > mov_speed_max) target_speed = mov_speed_max;
+        if (mov_accel_val > mov_accel_max) mov_accel_val = mov_accel_max;
+
+        Vector2Int_t directional_target_speed =
         {
-            mov_delta.x -= mov_speed * deltaTime;
+            target_speed * sign(((eph.buttons_current & kButtonRight) - (eph.buttons_current & kButtonLeft))),
+            target_speed * sign(((eph.buttons_current & kButtonDown) - (eph.buttons_current & kButtonUp))),
+        };
+
+
+        if (eph.mov_speed.x < directional_target_speed.x)
+        {
+            eph.mov_speed.x += mov_accel_val;
+            if (eph.mov_speed.x > directional_target_speed.x) eph.mov_speed.x = directional_target_speed.x;
+        }
+        else if (eph.mov_speed.x > directional_target_speed.x)
+        {
+            eph.mov_speed.x -= mov_accel_val;
+            if (eph.mov_speed.x < directional_target_speed.x) eph.mov_speed.x = directional_target_speed.x;
         }
 
-        if (eph.buttons_current & kButtonRight)
+        if (eph.mov_speed.y < directional_target_speed.y)
         {
-            mov_delta.x += mov_speed * deltaTime;
+            eph.mov_speed.y += mov_accel_val;
+            if (eph.mov_speed.y > directional_target_speed.y) eph.mov_speed.y = directional_target_speed.y;
+        }
+        else if (eph.mov_speed.y > directional_target_speed.y)
+        {
+            eph.mov_speed.y -= mov_accel_val;
+            if (eph.mov_speed.y < directional_target_speed.y) eph.mov_speed.y = directional_target_speed.y;
         }
 
-        if (eph.buttons_current & kButtonUp)
-        {
-            mov_delta.y -= mov_speed * deltaTime;
-        }
-
-        if (eph.buttons_current & kButtonDown)
-        {
-            mov_delta.y += mov_speed * deltaTime;
-        }
+        mov_delta.x = eph.mov_speed.x * deltaTime;
+        mov_delta.y = eph.mov_speed.y * deltaTime;
 
         if (mov_delta.x != 0 || mov_delta.y != 0)
         {
-            Vector2_t current_pos = { eph.player_ptr->entity.position_px.x, eph.player_ptr->entity.position_px.y };
-            Vector2_t new_pos = { current_pos.x + mov_delta.x, current_pos.y + mov_delta.y };
-            Vector2_t new_offset_pos = { new_pos.x + TILE_OFFSET_PX, new_pos.y + TILE_OFFSET_PX };
+            Vector2Int_t current_pos = { eph.player_ptr->entity.position_px.x, eph.player_ptr->entity.position_px.y };
+            Vector2Int_t new_pos = { current_pos.x + mov_delta.x, current_pos.y + mov_delta.y };
+            Vector2Int_t new_offset_pos = { new_pos.x + TILE_OFFSET_PX, new_pos.y + TILE_OFFSET_PX };
 
-            Vector2_t eval_coll_tiles[4] =
+            Vector2Int_t eval_coll_tiles[4] =
             {
                 { (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX },
                 { (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
@@ -407,7 +465,7 @@ static int update(void* userdata)
 
             //TileFlags_t sum_tile_flags = eval_tile_flags[0] | eval_tile_flags[1] | eval_tile_flags[2] | eval_tile_flags[3];
             TileFlags_t tile_flags = TILEFLAG_NONE;
-            Vector2_t coll_tile = {0};
+            Vector2Int_t coll_tile = {0};
 
             for (uint8_t i = 0; i < 4; i++)
             {
@@ -418,6 +476,8 @@ static int update(void* userdata)
                 // if applicable flags are added later, they should be tested above this one
                 if (!(tile_flags & TILEFLAG_WALKABLE))
                 {
+                    eph.mov_speed.x *= -0.95f;
+                    eph.mov_speed.y *= -0.95f;
                     break;
                 }
                 else if (tile_flags & TILEFLAG_DOOR_H
@@ -463,12 +523,13 @@ static int update(void* userdata)
             if (tile_flags & TILEFLAG_WALKABLE)
             {
                 eph.player_ptr->entity.position_px = new_pos;
-                eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
-                eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
             }
         }
 
         float camera_follow_speed = 6.5f * deltaTime;
+
+        eph.camera_offset_target.x = ((default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX) - eph.camera_peek_offset.x;
+        eph.camera_offset_target.y = ((default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX) - eph.camera_peek_offset.y;
 
         if (eph.camera_offset.x > eph.camera_offset_target.x)
         {
@@ -498,35 +559,36 @@ static int update(void* userdata)
         snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
 
-        draw_room(pd, eph.current_room_ptr, eph.camera_offset);
+        Vector2Int_t room_offset = eph.camera_offset;
 
-        Vector2_t room_offset;
+        draw_room(pd, eph.current_room_ptr, room_offset);
+        Vector2Int_t neighbour_offset = room_offset;
 
         if (ser.current_room_idx < (ROOM_COUNT-1))
         {
-            room_offset.x = eph.camera_offset.x+(ROOM_WIDTH*TILE_SIZE_PX);
-            room_offset.y = eph.camera_offset.y;
-            draw_room(pd, eph.current_room_ptr+1, room_offset);
+            neighbour_offset.x = room_offset.x+(ROOM_WIDTH*TILE_SIZE_PX);
+            neighbour_offset.y = room_offset.y;
+            draw_room(pd, eph.current_room_ptr+1, neighbour_offset);
 
             if (ser.current_room_idx < ((ROOM_COUNT-1)-LEVEL_WIDTH))
             {
-                room_offset.x = eph.camera_offset.x;
-                room_offset.y = room_offset.y+(ROOM_HEIGHT*TILE_SIZE_PX);
-                draw_room(pd, eph.current_room_ptr+LEVEL_WIDTH, room_offset);
+                neighbour_offset.x = room_offset.x;
+                neighbour_offset.y = room_offset.y+(ROOM_HEIGHT*TILE_SIZE_PX);
+                draw_room(pd, eph.current_room_ptr+LEVEL_WIDTH, neighbour_offset);
             }
         }
 
         if (ser.current_room_idx > 0)
         {
-            room_offset.x = eph.camera_offset.x-(ROOM_WIDTH*TILE_SIZE_PX);
-            room_offset.y = eph.camera_offset.y;
-            draw_room(pd, eph.current_room_ptr-1, room_offset);
+            neighbour_offset.x = room_offset.x-(ROOM_WIDTH*TILE_SIZE_PX);
+            neighbour_offset.y = room_offset.y;
+            draw_room(pd, eph.current_room_ptr-1, neighbour_offset);
 
             if (ser.current_room_idx > LEVEL_WIDTH)
             {
-                room_offset.x = eph.camera_offset.x;
-                room_offset.y = room_offset.y-(ROOM_HEIGHT*TILE_SIZE_PX);
-                draw_room(pd, eph.current_room_ptr-LEVEL_WIDTH, room_offset);
+                neighbour_offset.x = room_offset.x;
+                neighbour_offset.y = room_offset.y-(ROOM_HEIGHT*TILE_SIZE_PX);
+                draw_room(pd, eph.current_room_ptr-LEVEL_WIDTH, neighbour_offset);
             }
         }
     }
