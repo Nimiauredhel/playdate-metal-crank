@@ -6,6 +6,7 @@
 #define TILE_SIZE_PX (40)
 #define TILE_OFFSET_PX (TILE_SIZE_PX / 2)
 #define TILE_COLL_PX (16)
+
 #define TEXT_WIDTH (86)
 #define TEXT_HEIGHT (16)
 
@@ -110,6 +111,7 @@ typedef struct SerializableState
 
 typedef struct EphemeralState
 {
+    Vector2Int_t screen_size;
     PDButtons buttons_current;
     PDButtons buttons_pushed;
     PDButtons buttons_released;
@@ -282,15 +284,25 @@ void populate_level(void)
 
 static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
 {
+    int draw_min = -TILE_SIZE_PX;
+    Vector2Int_t draw_max = { eph.screen_size.x - 1, eph.screen_size.y - 1 };
     Vector2Int_t draw_pos = {0};
 
     for (int x = 0; x < ROOM_WIDTH; x++)
     {
+        draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + offset.x;
+
+        if (draw_pos.x < draw_min) continue;
+        if (draw_pos.x > draw_max.x) break;
+
         for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            Tile_t *tile = room_ptr->tiles+(x + (ROOM_WIDTH * y));
-            draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + offset.x;
             draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + offset.y;
+
+            if (draw_pos.y < draw_min) continue;
+            if (draw_pos.y > draw_max.y) break;
+
+            Tile_t *tile = room_ptr->tiles+(x + (ROOM_WIDTH * y));
             pd->graphics->drawBitmap(eph.bitmaps[tile->bitmap_idx],
                     draw_pos.x, draw_pos.y, kBitmapUnflipped);
         }
@@ -301,8 +313,13 @@ static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
     for (uint8_t i = 0; i < room_ptr->local_entity_count; i++)
     {
         entity = room_ptr->entities+i;
+
         draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + offset.x;
+        if (draw_pos.x < draw_min || draw_pos.x > draw_max.x) continue;
+
         draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + offset.y;
+        if (draw_pos.y < draw_min || draw_pos.y > draw_max.y) continue;
+
         pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
     }
 
@@ -313,8 +330,13 @@ static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
         if (ser.global_entities[i].current_room_idx == room_idx)
         {
             entity = &(ser.global_entities+i)->entity;
+
             draw_pos.x = TILE_OFFSET_PX + entity->position_px.x + offset.x;
+            if (draw_pos.x < draw_min || draw_pos.x > draw_max.x) continue;
+
             draw_pos.y = TILE_OFFSET_PX + entity->position_px.y + offset.y;
+            if (draw_pos.y < draw_min || draw_pos.y > draw_max.y) continue;
+
             pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
         }
     }
@@ -337,6 +359,8 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         bzero(&ser, sizeof(ser));
         bzero(&eph, sizeof(eph));
 
+        eph.screen_size.x = pd->display->getWidth();
+        eph.screen_size.y = pd->display->getHeight();
         eph.camera_offset_target = default_camera_offset;
         eph.font = pd->graphics->loadFont(fontpath, &err);
 		
@@ -366,9 +390,14 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         eph.camera_offset = eph.camera_offset_target;
 
         pd->display->setRefreshRate(50);
+
+        // calibrate accelerometer
+        pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
+        memcpy(&eph.accelerometer_center, &eph.accelerometer_raw, sizeof(Vector3_t));
+
+        pd->system->resetElapsedTime();
 		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
 		pd->system->setUpdateCallback(update, pd);
-        pd->system->resetElapsedTime();
 	}
 	
 	return 0;
@@ -450,10 +479,10 @@ static int update(void* userdata)
 
             Vector2Int_t eval_coll_tiles[4] =
             {
-                { (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX },
-                { (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
-                { (new_offset_pos.x - TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
-                { (new_offset_pos.x + TILE_COLL_PX) / TILE_SIZE_PX, (new_offset_pos.y - TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x - TILE_COLL_PX/2) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX/2) / TILE_SIZE_PX },
+                { (new_offset_pos.x + TILE_COLL_PX/2) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x - TILE_COLL_PX/2) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX) / TILE_SIZE_PX },
+                { (new_offset_pos.x + TILE_COLL_PX/2) / TILE_SIZE_PX, (new_offset_pos.y + TILE_COLL_PX/2) / TILE_SIZE_PX },
             };
             TileFlags_t eval_tile_flags[4] =
             {
@@ -487,13 +516,13 @@ static int update(void* userdata)
                     {
                         set_current_room(ser.current_room_idx - 1);
                         new_pos.x = TILE_SIZE_PX * ROOM_MAX_X;
-                        eph.camera_offset.x = (default_camera_offset.x - (TILE_SIZE_PX * ROOM_MAX_X) - TILE_SIZE_PX);
+                        eph.camera_offset.x = (default_camera_offset.x - (new_pos.x + TILE_SIZE_PX*2));
                     }
                     else if (coll_tile.x == ROOM_MAX_X)
                     {
                         set_current_room(ser.current_room_idx + 1);
                         new_pos.x = TILE_SIZE_PX * ROOM_MIN_X;
-                        eph.camera_offset.x = (default_camera_offset.x - (TILE_SIZE_PX * ROOM_MIN_X) - TILE_SIZE_PX);
+                        eph.camera_offset.x = (default_camera_offset.x - new_pos.x);
                     }
 
                     set_player_room(ser.current_room_idx);
@@ -506,13 +535,13 @@ static int update(void* userdata)
                     {
                         set_current_room(ser.current_room_idx - LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * ROOM_MAX_Y;
-                        eph.camera_offset.y = (default_camera_offset.y - (TILE_SIZE_PX * ROOM_MAX_Y) - TILE_SIZE_PX);
+                        eph.camera_offset.y = (default_camera_offset.y - (new_pos.y + TILE_SIZE_PX*2));
                     }
                     else if (coll_tile.y == ROOM_MAX_Y)
                     {
                         set_current_room(ser.current_room_idx + LEVEL_WIDTH);
                         new_pos.y = TILE_SIZE_PX * ROOM_MIN_Y;
-                        eph.camera_offset.y = (default_camera_offset.y - (TILE_SIZE_PX * ROOM_MIN_Y) - TILE_SIZE_PX);
+                        eph.camera_offset.y = (default_camera_offset.y - new_pos.y);
                     }
 
                     set_player_room(ser.current_room_idx);
@@ -526,7 +555,7 @@ static int update(void* userdata)
             }
         }
 
-        float camera_follow_speed = 6.5f * deltaTime;
+        float camera_follow_speed = 3.5f * deltaTime;
 
         eph.camera_offset_target.x = ((default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX) - eph.camera_peek_offset.x;
         eph.camera_offset_target.y = ((default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX) - eph.camera_peek_offset.y;
