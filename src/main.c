@@ -199,7 +199,7 @@ static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
     return room->tiles[tile_x + (tile_y * ROOM_WIDTH)].flags;
 }
 
-static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
+static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool start_bools[4])
 {
     // limiting a single walk to a sensible amount
     // TODO: figure out possible implications
@@ -209,10 +209,10 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
 
     Vector2Int_t path_starts[4] =
     {
-        (Vector2Int_t){ROOM_MID_X, ROOM_MIN_Y+1},
-        (Vector2Int_t){ROOM_MID_X, ROOM_MAX_Y-1},
         (Vector2Int_t){ROOM_MIN_X+1, ROOM_MID_Y},
+        (Vector2Int_t){ROOM_MID_X, ROOM_MIN_Y+1},
         (Vector2Int_t){ROOM_MAX_X-1, ROOM_MID_Y},
+        (Vector2Int_t){ROOM_MID_X, ROOM_MAX_Y-1},
     };
 
     // 1. initialization
@@ -241,6 +241,8 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
 
     for (int path_idx = 0; path_idx < 4; path_idx++)
     {
+        if (!start_bools[path_idx]) continue;
+
         cell_grid[path_starts[path_idx].x][path_starts[path_idx].y] = (CellType_t)path_idx;
     }
 
@@ -250,6 +252,8 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
     // four random walks, until all four paths are connected to a single maze.
     for (CellType_t path_idx = 0; path_idx < 4; path_idx++)
     {
+        if (!start_bools[path_idx]) continue;
+
         int32_t walk_idx = 0;
         // 2. start walk from pre-determined path start.
         move_stack[0] = DIR_NONE;
@@ -424,7 +428,15 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     bool placed_player = false;
     Vector2Int_t player_coord = {0};
 
-    bool maze_success = generate_maze(maze_grid);
+    bool door_bools[4] =
+    {
+        level_x > LEVEL_MIN_X,
+        level_y > LEVEL_MIN_Y,
+        level_x < LEVEL_MAX_X,
+        level_y < LEVEL_MAX_Y,
+    };
+
+    bool maze_success = generate_maze(maze_grid, door_bools);
     if (!maze_success) return false;
 
     for (int x = 0; x < ROOM_WIDTH; x++)
