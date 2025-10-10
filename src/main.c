@@ -199,13 +199,23 @@ static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
     return room->tiles[tile_x + (tile_y * ROOM_WIDTH)].flags;
 }
 
-static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool start_bools[4])
+static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const bool path_bools[4])
 {
     // limiting a single walk to a sensible amount
     // TODO: figure out possible implications
     static const uint16_t walk_max_len = (ROOM_WIDTH*ROOM_HEIGHT);
 
+    int first_path = rand() % 4;
+
     bool success = true;
+
+    bool paths_connected[4] =
+    {
+        !path_bools[0],
+        !path_bools[1],
+        !path_bools[2],
+        !path_bools[3],
+    };
 
     Vector2Int_t path_starts[4] =
     {
@@ -239,9 +249,11 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool st
         cell_grid[ROOM_MAX_X][y] = CELL_BORDER;
     }
 
-    for (int path_idx = 0; path_idx < 4; path_idx++)
+    for (int path_num = 0; path_num < 4; path_num++)
     {
-        if (!start_bools[path_idx]) continue;
+        CellType_t path_idx = (first_path + path_num) % 4;
+
+        if (!path_bools[path_idx]) continue;
 
         cell_grid[path_starts[path_idx].x][path_starts[path_idx].y] = (CellType_t)path_idx;
     }
@@ -250,9 +262,22 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool st
     Direction_t move_stack[(ROOM_WIDTH*ROOM_HEIGHT)] = {0};
 
     // four random walks, until all four paths are connected to a single maze.
-    for (CellType_t path_idx = 0; path_idx < 4; path_idx++)
+    for (CellType_t path_num = 0; path_num < 4; path_num++)
     {
-        if (!start_bools[path_idx]) continue;
+        CellType_t path_idx = (first_path + path_num) % 4;
+
+        if (!path_bools[path_idx]) continue;
+
+        bool required_connections_left = false;
+
+        for (uint8_t i = 0; i < 4; i++)
+        {
+            if (!paths_connected[i])
+            {
+                required_connections_left = true;
+                break;
+            }
+        }
 
         int32_t walk_idx = 0;
         // 2. start walk from pre-determined path start.
@@ -295,13 +320,13 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool st
 
             int dir_count = 0;
             Direction_t dir_indices[DIR_COUNT] = {DIR_NONE};
-            bool loop = false;
 
             for (int i = DIR_LEFT; i < DIR_COUNT; i++)
             {
                 if (!dirs_in_bounds[i]) continue;
 
-                if (dirs_types[i] == (CellType_t)path_idx)
+                if (dirs_types[i] == (CellType_t)path_idx
+                || (required_connections_left && dirs_types[i] >= 0 && paths_connected[dirs_types[i]]))
                 {
                     // ** LOOP **
                     // skip it as if it were a border.
@@ -328,6 +353,8 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool st
                         //pd_s->system->logToConsole("Link [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
                         //        dirs_coords[i].x, dirs_coords[i].y, coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
                         // end walk
+                        paths_connected[path_idx] = true;
+                        paths_connected[dirs_types[i]] = true;
                         walk_idx = -1;
                         break;
                 }
@@ -335,7 +362,7 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], bool st
                 if (walk_idx == -1) break;
             }
 
-            if (walk_idx == -1 || loop) continue;
+            if (walk_idx == -1) continue;
 
             // check for dead end
             if (dir_count == 0)
@@ -404,16 +431,6 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 {
     static const uint8_t doorh_count = 2;
     static const uint8_t doorv_count = 2;
-    static const uint16_t doorh_indices[2] =
-    {
-        ROOM_MIN_X + (ROOM_WIDTH*ROOM_MID_Y),
-        ROOM_MAX_X + (ROOM_WIDTH*ROOM_MID_Y),
-    };
-    static const uint16_t doorv_indices[2] =
-    {
-        ROOM_MID_X + (ROOM_WIDTH*ROOM_MIN_Y),
-        ROOM_MID_X + (ROOM_WIDTH*ROOM_MAX_Y),
-    };
 
     static CellType_t maze_grid[ROOM_WIDTH][ROOM_HEIGHT] = {0};
 
@@ -428,12 +445,24 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     bool placed_player = false;
     Vector2Int_t player_coord = {0};
 
-    bool door_bools[4] =
+    const bool door_bools[4] =
     {
         level_x > LEVEL_MIN_X,
         level_y > LEVEL_MIN_Y,
         level_x < LEVEL_MAX_X,
         level_y < LEVEL_MAX_Y,
+    };
+
+    const int32_t doorh_indices[2] =
+    {
+        door_bools[0] ? ROOM_MIN_X + (ROOM_WIDTH*ROOM_MID_Y) : -1,
+        door_bools[2] ? ROOM_MAX_X + (ROOM_WIDTH*ROOM_MID_Y) : -1,
+    };
+
+    const int32_t doorv_indices[2] =
+    {
+        door_bools[1] ? ROOM_MID_X + (ROOM_WIDTH*ROOM_MIN_Y) : -1,
+        door_bools[3] ? ROOM_MID_X + (ROOM_WIDTH*ROOM_MAX_Y) : -1,
     };
 
     bool maze_success = generate_maze(maze_grid, door_bools);
@@ -489,12 +518,14 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
     for (uint8_t i = 0; i < doorh_count; i++)
     {
+        if (doorh_indices[i] < 0) continue;
         room->tiles[doorh_indices[i]].bitmap_idx = BITMAP_DOOR_H;
         room->tiles[doorh_indices[i]].flags |= (TILEFLAG_DOOR_H | TILEFLAG_WALKABLE);
     }
 
     for (uint8_t i = 0; i < doorv_count; i++)
     {
+        if (doorv_indices[i] < 0) continue;
         room->tiles[doorv_indices[i]].bitmap_idx = BITMAP_DOOR_V;
         room->tiles[doorv_indices[i]].flags |= (TILEFLAG_DOOR_V | TILEFLAG_WALKABLE);
     }
@@ -865,7 +896,7 @@ static int update(void* userdata)
             neighbour_offset.y = room_offset.y;
             draw_room(pd, eph.current_room_ptr-1, neighbour_offset);
 
-            if (ser.current_room_idx > LEVEL_WIDTH)
+            if (ser.current_room_idx >= LEVEL_WIDTH)
             {
                 neighbour_offset.x = room_offset.x;
                 neighbour_offset.y = room_offset.y-(ROOM_HEIGHT*TILE_SIZE_PX);
