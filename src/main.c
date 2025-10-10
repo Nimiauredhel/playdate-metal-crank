@@ -32,6 +32,23 @@
 #define ENTITIES_LOCAL_MAX (4)
 #define BITMAP_COUNT (5)
 
+typedef enum CellType
+{
+    CELL_NONE = 0,
+    CELL_OPEN = 1,
+    CELL_CLOSED = 2,
+} CellType_t;
+
+typedef enum Direction
+{
+    DIR_NONE = -1,
+    DIR_LEFT = 0,
+    DIR_UP = 1,
+    DIR_RIGHT = 2,
+    DIR_DOWN = 3,
+    DIR_COUNT = 4,
+} Direction_t;
+
 typedef enum BitmapIndices
 {
     BITMAP_WALL = 0,
@@ -179,76 +196,367 @@ static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
     return room->tiles[tile_x + (tile_y * ROOM_WIDTH)].flags;
 }
 
-static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
+static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
 {
+    static const uint16_t cell_count = ROOM_WIDTH*ROOM_HEIGHT;
+    // limiting a single walk to a sensible amount
+    // TODO: figure out possible implications
+    static const uint16_t walk_max_len = (ROOM_WIDTH*ROOM_HEIGHT)/8;
+
+    static const uint16_t max_iterations = cell_count;
+    static bool done_once = false;
+
+    // temporarily reusing the same maze for all rooms until it works right
+    if (done_once) return true;
+    done_once = true;
+
+    bool success = true;
+
+    Vector2Int_t walk_stack[(ROOM_WIDTH*ROOM_HEIGHT)/8] = {0};
+    int32_t walk_idx = -1;
+    Direction_t last_move = DIR_NONE;
+    uint16_t cells_counted = 0;
+    uint16_t iterations_counted = 0;
+    Vector2Int_t search_start = {0, 0};
+
+    // 1. initialization
+
+    // - first zero everything
+    for (uint16_t x = 0; x < ROOM_WIDTH; x++)
+    {
+        for (uint16_t y = 0; y < ROOM_HEIGHT; y++)
+        {
+            cell_grid[x][y] = CELL_NONE;
+        }
+    }
+
+    // - set the bounding walls to CLOSED
+    for (uint16_t x = 0; x < ROOM_WIDTH; x++)
+    {
+        if (cell_grid[x][ROOM_MIN_Y] == CELL_NONE)
+        {
+            cell_grid[x][ROOM_MIN_Y] = CELL_CLOSED;
+            cells_counted++;
+        }
+
+        if (cell_grid[x][ROOM_MAX_Y] == CELL_NONE)
+        {
+            cell_grid[x][ROOM_MAX_Y] = CELL_CLOSED;
+            cells_counted++;
+        }
+    }
+
+    for (uint16_t y = 0; y < ROOM_HEIGHT; y++)
+    {
+        if (cell_grid[ROOM_MIN_X][y] == CELL_NONE)
+        {
+            cell_grid[ROOM_MIN_X][y] = CELL_CLOSED;
+            cells_counted++;
+        }
+
+        if (cell_grid[ROOM_MAX_X][y] == CELL_NONE)
+        {
+            cell_grid[ROOM_MAX_X][y] = CELL_CLOSED;
+            cells_counted++;
+        }
+    }
+
+    // - ensure OPEN cells next to the four exits
+    cell_grid[ROOM_MID_X]  [ROOM_MIN_Y+1] = CELL_OPEN;
+    cell_grid[ROOM_MID_X]  [ROOM_MAX_Y-1] = CELL_OPEN;
+    cell_grid[ROOM_MIN_X+1][ROOM_MID_Y] =   CELL_OPEN;
+    cell_grid[ROOM_MAX_X-1][ROOM_MID_Y] =   CELL_OPEN;
+    cells_counted+=4;
+
+    // loop of random walks, until all cells are resolved to either OPEN or CLOSED.
+    while(cells_counted < cell_count && success)
+    {
+        if (iterations_counted >= max_iterations)
+        {
+            pd_s->system->logToConsole("!! Random walk exceeded iteration limit, terminating !!");
+            success = false;
+            break;
+        }
+
+        // if cell_idx is negative, we are not in the middle of a walk, so a new walk will begin.
+        if (walk_idx == -1)
+        {
+            iterations_counted++;
+            // 2. scan for an unresolved cell, from which the new walk will start.
+            for (int x = search_start.x; x < ROOM_WIDTH; x++)
+            {
+                for (int y = search_start.y; y < ROOM_HEIGHT; y++)
+                {
+                    if (cell_grid[x][y] == CELL_NONE)
+                    {
+                        // - unresolved cell found.
+                        // - placing it a the base of the walk stack.
+                        walk_idx = 0;
+                        walk_stack[0].x = x;
+                        walk_stack[0].y = y;
+                        last_move = DIR_NONE;
+
+                        break;
+                    }
+                }
+
+                if (walk_idx == 0) break;
+            }
+        }
+
+        if (walk_idx < 0)
+        {
+            if (search_start.x == 0 && search_start.y == 0)
+            {
+                pd_s->system->logToConsole("!! Invalid walk stack idx after counting %d out of %d cells !!", cells_counted, cell_count);
+                //success = false;
+                break;
+            }
+            else
+            {
+                search_start.x = 0;
+                search_start.y = 0;
+                continue;
+            }
+        }
+
+        search_start.x = rand() % ROOM_WIDTH;
+        search_start.y = rand() % ROOM_HEIGHT;
+
+        // 3. walk and set cells 'open' until reaching either a foreign open cell (LINK), a self open cell (LOOP), or a DEAD END
+        Vector2Int_t curr = walk_stack[walk_idx];
+        // - set current cell to OPEN; we will change this to CLOSED if a loop is detected.
+        // - in either case, it is now marked as resolved and will not be checked again.
+        cell_grid[curr.x][curr.y] = CELL_OPEN;
+        // - increment the count of resolved cells (the loop break condition).
+        cells_counted++;
+
+        // - check valid directions from current cell
+        bool dirs_in_bounds[DIR_COUNT] =
+        {
+            curr.x > ROOM_MIN_X && last_move != DIR_RIGHT,
+            curr.y > ROOM_MIN_Y && last_move != DIR_DOWN,
+            curr.x < ROOM_MAX_X && last_move != DIR_LEFT,
+            curr.y < ROOM_MAX_Y && last_move != DIR_UP,
+        };
+
+        CellType_t dirs_types[DIR_COUNT] =
+        {
+            dirs_in_bounds[DIR_LEFT]  ? cell_grid[curr.x-1][curr.y] : CELL_CLOSED,
+            dirs_in_bounds[DIR_UP]    ? cell_grid[curr.x][curr.y-1] : CELL_CLOSED,
+            dirs_in_bounds[DIR_RIGHT] ? cell_grid[curr.x+1][curr.y] : CELL_CLOSED,
+            dirs_in_bounds[DIR_DOWN]  ? cell_grid[curr.x][curr.y+1] : CELL_CLOSED,
+        };
+
+        Vector2Int_t dirs_coords[DIR_COUNT] =
+        {
+            dirs_in_bounds[DIR_LEFT]  ? (Vector2Int_t){curr.x-1, curr.y} : (Vector2Int_t){0, 0},
+            dirs_in_bounds[DIR_UP]    ? (Vector2Int_t){curr.x, curr.y-1} : (Vector2Int_t){0, 0},
+            dirs_in_bounds[DIR_RIGHT] ? (Vector2Int_t){curr.x+1, curr.y} : (Vector2Int_t){0, 0},
+            dirs_in_bounds[DIR_DOWN]  ? (Vector2Int_t){curr.x, curr.y+1} : (Vector2Int_t){0, 0},
+        };
+
+        int dir_count = 0;
+        Direction_t dir_indices[DIR_COUNT] = {DIR_NONE};
+
+        for (int i = DIR_LEFT; i < DIR_COUNT; i++)
+        {
+            if (!dirs_in_bounds[i]) continue;
+
+            switch(dirs_types[i])
+            {
+                case CELL_OPEN:
+                    // ** LINK ** or ** LOOP **
+                    pd_s->system->logToConsole("Link/Loop [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                            dirs_coords[i].x, dirs_coords[i].y, walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
+                    // check for loop
+                    for (uint16_t j = 0; j < walk_idx-1; j++)
+                    {
+                        if (walk_stack[j].x == dirs_coords[i].x
+                         && walk_stack[j].y == dirs_coords[i].y)
+                        {
+                            // ** LOOP ** confirmed
+                            // set current cell closed
+                            cell_grid[curr.x][curr.y] = CELL_CLOSED;
+                            break;
+                        }
+                    }
+                    // end walk
+                    walk_idx = -1;
+                    break;
+                case CELL_NONE:
+                    // cell is unresolved, count and list it as option for next step
+                    dir_indices[dir_count] = i;
+                    dir_count++;
+                    break;
+                case CELL_CLOSED:
+                    // cell is a wall, not counted as an option
+                  break;
+            }
+
+            if (walk_idx == -1) break;
+        }
+
+        if (walk_idx == -1) continue;
+
+        // check for dead end
+        if (dir_count == 0)
+        {
+            // ** DEAD END **
+            // end walk.
+            // TODO: implement backtracking for dead ends? not sure if necessary
+            pd_s->system->logToConsole("Dead end reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
+            walk_idx = -1;
+            continue;
+        }
+
+        // check if current walk exceeded allowed length;
+        // NOTE: this check must NEVER happen before the other stop conditions are tested.
+        if (walk_idx >= walk_max_len)
+        {
+            // ** WALK LIMIT REACHED **
+            // end walk.
+            pd_s->system->logToConsole("Limit reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
+            walk_idx = -1;
+            continue;
+        }
+
+        // ** WALK CONTINUES **
+        Direction_t chosen_dir = DIR_NONE;
+
+        // if only one direction is valid, select it
+        if (dir_count == 1)
+        {
+            chosen_dir = dir_indices[0];
+        }
+        // else, select randomly from valid options
+        else
+        {
+            chosen_dir = dir_indices[rand() % dir_count];
+        }
+
+        last_move = chosen_dir;
+        walk_idx++;
+
+        switch(chosen_dir)
+        {
+            case DIR_LEFT:
+                walk_stack[walk_idx].x = curr.x-1;
+                walk_stack[walk_idx].y = curr.y;
+                break;
+            case DIR_UP:
+                walk_stack[walk_idx].x = curr.x;
+                walk_stack[walk_idx].y = curr.y-1;
+                break;
+            case DIR_RIGHT:
+                walk_stack[walk_idx].x = curr.x+1;
+                walk_stack[walk_idx].y = curr.y;
+                break;
+            case DIR_DOWN:
+                walk_stack[walk_idx].x = curr.x;
+                walk_stack[walk_idx].y = curr.y+1;
+                break;
+            case DIR_NONE:
+            case DIR_COUNT:
+              // should not happen, end walk.
+              walk_idx = -1;
+              pd_s->system->logToConsole("!! Invalid 'chosen direction' in maze generation !!");
+              success = false;
+              break;
+        }
+    }
+
+    // 4. presumably all cells have now been resolved and the caller can now use the maze grid.
+    return success;
+}
+
+static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
+{
+    static const uint8_t doorh_count = 2;
+    static const uint8_t doorv_count = 2;
+    static const uint16_t doorh_indices[2] =
+    {
+        ROOM_MIN_X + (ROOM_WIDTH*ROOM_MID_Y),
+        ROOM_MAX_X + (ROOM_WIDTH*ROOM_MID_Y),
+    };
+    static const uint16_t doorv_indices[2] =
+    {
+        ROOM_MID_X + (ROOM_WIDTH*ROOM_MIN_Y),
+        ROOM_MID_X + (ROOM_WIDTH*ROOM_MAX_Y),
+    };
+
+    static CellType_t maze_grid[ROOM_WIDTH][ROOM_HEIGHT] = {0};
+
     pd_s->system->logToConsole("Populating room [%d,%d].", level_x, level_y);
 
     uint16_t level_idx = level_x + (level_y * LEVEL_WIDTH);
     Room_t *room = ser.level.rooms + level_idx;
     room->coord.x = level_x;
     room->coord.y = level_y;
-    // randomly place walls in level
-    uint16_t max_walls = (ROOM_WIDTH * ROOM_HEIGHT) / 2;
-    uint16_t walls_count = 0;
+
+    Tile_t *tile = NULL;
     bool placed_player = false;
     Vector2Int_t player_coord = {0};
+
+    bool maze_success = generate_maze(maze_grid);
+    if (!maze_success) return false;
 
     for (int x = 0; x < ROOM_WIDTH; x++)
     {
         for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            Tile_t *tile = room->tiles+(x + (ROOM_WIDTH * y));
+            tile = room->tiles+(x + (ROOM_WIDTH * y));
 
              /**
              * All fields are expected to be zero-initialized and adhere to zero-as-default,
              * which should have the same effect as if this code were here:
              *
              * tile->bitmap_idx = BITMAP_WALL;
-             * tile->flags = TILEFLAG_NONE;
+            * tile->flags = TILEFLAG_NONE;
              *
              * TODO: create room generation tests to enforce this assumption.
              **/
 
-            // left/right doors
-            if ((x == ROOM_MID_X)
-                && ((y == 0 && level_y > 0)
-                ||  (y == ROOM_MAX_Y && level_y < LEVEL_MAX_Y)))
+            switch(maze_grid[x][y])
             {
-                tile->bitmap_idx = BITMAP_DOOR_V;
-                tile->flags |= (TILEFLAG_DOOR_V | TILEFLAG_WALKABLE);
-            }
-            // up/down doors
-            else if ((y == ROOM_MID_Y)
-                && ((x == 0 && level_x > 0)
-                ||  (x == ROOM_MAX_X && level_x < LEVEL_MAX_X)))
-            {
-                tile->bitmap_idx = BITMAP_DOOR_H;
-                tile->flags |= (TILEFLAG_DOOR_H | TILEFLAG_WALKABLE);
-            }
-            else if (x > ROOM_MIN_X && x < ROOM_MAX_X
-                    && y > ROOM_MIN_Y && y < ROOM_MAX_Y)
-            {
-                if(walls_count < max_walls && (rand() % 100) > 70)
-                {
-                    walls_count++;
-                    // nothing to set since unwalkable wall == 0, 0
-                    //tile->bitmap_idx = 0;
-                    //tile->type_idx = 1;
-                }
-                else
-                {
-                    tile->bitmap_idx = BITMAP_FLOOR;
-                    tile->flags |= TILEFLAG_WALKABLE;
+            case CELL_OPEN:
+                tile->bitmap_idx = BITMAP_FLOOR;
+                tile->flags |= TILEFLAG_WALKABLE;
 
-                    if (player_start && (!placed_player || (rand() % 100) > 80))
-                    {
-                        player_coord.x = x;
-                        player_coord.y = y;
-                        placed_player = true;
-                    }
+                if (player_start && (!placed_player || (rand() % 100) > 80))
+                {
+                    player_coord.x = x;
+                    player_coord.y = y;
+                    placed_player = true;
                 }
+
+                break;
+            case CELL_CLOSED:
+                tile->bitmap_idx = BITMAP_WALL;
+                tile->flags = TILEFLAG_NONE;
+                break;
+            case CELL_NONE:
+                pd_s->system->logToConsole("!! Unresolved cell in returned maze grid !!");
+                tile->bitmap_idx = BITMAP_PLAYER;
+                tile->flags = TILEFLAG_NONE;
+                // shouldn't happen
+                break;
             }
         }
+    }
+
+    for (uint8_t i = 0; i < doorh_count; i++)
+    {
+        room->tiles[doorh_indices[i]].bitmap_idx = BITMAP_DOOR_H;
+        room->tiles[doorh_indices[i]].flags |= (TILEFLAG_DOOR_H | TILEFLAG_WALKABLE);
+    }
+
+    for (uint8_t i = 0; i < doorv_count; i++)
+    {
+        room->tiles[doorv_indices[i]].bitmap_idx = BITMAP_DOOR_V;
+        room->tiles[doorv_indices[i]].flags |= (TILEFLAG_DOOR_V | TILEFLAG_WALKABLE);
     }
 
     if (player_start && eph.player_ptr != NULL)
@@ -260,9 +568,11 @@ static void populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
         set_player_room(room_idx);
         set_current_room(room_idx);
     }
+
+    return true;
 }
 
-void populate_level(void)
+bool populate_level(void)
 {
     pd_s->system->logToConsole("Initializing level.");
     uint16_t start_x = rand() % LEVEL_WIDTH;
@@ -277,9 +587,12 @@ void populate_level(void)
     {
         for (uint16_t y = 0; y < LEVEL_HEIGHT; y++)
         {
-            populate_room(x, y, x == start_x && y == start_y);
+            bool room_success = populate_room(x, y, x == start_x && y == start_y);
+            if (!room_success) return false;
         }
     }
+
+    return true;
 }
 
 static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
@@ -383,18 +696,17 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
             }
         }
 
-        populate_level();
+        bool level_init_success = populate_level();
 
         eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
         eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
         eph.camera_offset = eph.camera_offset_target;
 
-        pd->display->setRefreshRate(50);
-
         // calibrate accelerometer
         pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
         memcpy(&eph.accelerometer_center, &eph.accelerometer_raw, sizeof(Vector3_t));
 
+        pd->display->setRefreshRate(50);
         pd->system->resetElapsedTime();
 		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
 		pd->system->setUpdateCallback(update, pd);
