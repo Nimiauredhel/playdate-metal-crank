@@ -34,9 +34,12 @@
 
 typedef enum CellType
 {
-    CELL_NONE = 0,
-    CELL_OPEN = 1,
-    CELL_CLOSED = 2,
+    CELL_BORDER = -2,
+    CELL_CLOSED = -1,
+    CELL_PATH_0 = 0,
+    CELL_PATH_1 = 1,
+    CELL_PATH_2 = 2,
+    CELL_PATH_3 = 3,
 } CellType_t;
 
 typedef enum Direction
@@ -198,277 +201,198 @@ static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
 
 static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT])
 {
-    static const uint16_t cell_count = ROOM_WIDTH*ROOM_HEIGHT;
     // limiting a single walk to a sensible amount
     // TODO: figure out possible implications
-    static const uint16_t walk_max_len = (ROOM_WIDTH*ROOM_HEIGHT)/8;
-
-    static const uint16_t max_iterations = cell_count;
-    static bool done_once = false;
-
-    // temporarily reusing the same maze for all rooms until it works right
-    if (done_once) return true;
-    done_once = true;
+    static const uint16_t walk_max_len = (ROOM_WIDTH*ROOM_HEIGHT);
 
     bool success = true;
 
-    Vector2Int_t walk_stack[(ROOM_WIDTH*ROOM_HEIGHT)/8] = {0};
-    int32_t walk_idx = -1;
-    Direction_t last_move = DIR_NONE;
-    uint16_t cells_counted = 0;
-    uint16_t iterations_counted = 0;
-    Vector2Int_t search_start = {0, 0};
+    Vector2Int_t path_starts[4] =
+    {
+        (Vector2Int_t){ROOM_MID_X, ROOM_MIN_Y+1},
+        (Vector2Int_t){ROOM_MID_X, ROOM_MAX_Y-1},
+        (Vector2Int_t){ROOM_MIN_X+1, ROOM_MID_Y},
+        (Vector2Int_t){ROOM_MAX_X-1, ROOM_MID_Y},
+    };
 
     // 1. initialization
 
-    // - first zero everything
+    // - first close every cell
     for (uint16_t x = 0; x < ROOM_WIDTH; x++)
     {
         for (uint16_t y = 0; y < ROOM_HEIGHT; y++)
         {
-            cell_grid[x][y] = CELL_NONE;
+            cell_grid[x][y] = CELL_CLOSED;
         }
     }
 
-    // - set the bounding walls to CLOSED
+    // - set the bounding walls to BORDER so they don't get overriden
     for (uint16_t x = 0; x < ROOM_WIDTH; x++)
     {
-        if (cell_grid[x][ROOM_MIN_Y] == CELL_NONE)
-        {
-            cell_grid[x][ROOM_MIN_Y] = CELL_CLOSED;
-            cells_counted++;
-        }
-
-        if (cell_grid[x][ROOM_MAX_Y] == CELL_NONE)
-        {
-            cell_grid[x][ROOM_MAX_Y] = CELL_CLOSED;
-            cells_counted++;
-        }
+        cell_grid[x][ROOM_MIN_Y] = CELL_BORDER;
+        cell_grid[x][ROOM_MAX_Y] = CELL_BORDER;
     }
 
     for (uint16_t y = 0; y < ROOM_HEIGHT; y++)
     {
-        if (cell_grid[ROOM_MIN_X][y] == CELL_NONE)
-        {
-            cell_grid[ROOM_MIN_X][y] = CELL_CLOSED;
-            cells_counted++;
-        }
-
-        if (cell_grid[ROOM_MAX_X][y] == CELL_NONE)
-        {
-            cell_grid[ROOM_MAX_X][y] = CELL_CLOSED;
-            cells_counted++;
-        }
+        cell_grid[ROOM_MIN_X][y] = CELL_BORDER;
+        cell_grid[ROOM_MAX_X][y] = CELL_BORDER;
     }
 
-    // - ensure OPEN cells next to the four exits
-    cell_grid[ROOM_MID_X]  [ROOM_MIN_Y+1] = CELL_OPEN;
-    cell_grid[ROOM_MID_X]  [ROOM_MAX_Y-1] = CELL_OPEN;
-    cell_grid[ROOM_MIN_X+1][ROOM_MID_Y] =   CELL_OPEN;
-    cell_grid[ROOM_MAX_X-1][ROOM_MID_Y] =   CELL_OPEN;
-    cells_counted+=4;
-
-    // loop of random walks, until all cells are resolved to either OPEN or CLOSED.
-    while(cells_counted < cell_count && success)
+    for (int path_idx = 0; path_idx < 4; path_idx++)
     {
-        if (iterations_counted >= max_iterations)
-        {
-            pd_s->system->logToConsole("!! Random walk exceeded iteration limit, terminating !!");
-            success = false;
-            break;
-        }
+        cell_grid[path_starts[path_idx].x][path_starts[path_idx].y] = (CellType_t)path_idx;
+    }
 
-        // if cell_idx is negative, we are not in the middle of a walk, so a new walk will begin.
-        if (walk_idx == -1)
-        {
-            iterations_counted++;
-            // 2. scan for an unresolved cell, from which the new walk will start.
-            for (int x = search_start.x; x < ROOM_WIDTH; x++)
-            {
-                for (int y = search_start.y; y < ROOM_HEIGHT; y++)
-                {
-                    if (cell_grid[x][y] == CELL_NONE)
-                    {
-                        // - unresolved cell found.
-                        // - placing it a the base of the walk stack.
-                        walk_idx = 0;
-                        walk_stack[0].x = x;
-                        walk_stack[0].y = y;
-                        last_move = DIR_NONE;
+    Vector2Int_t coord_stack[(ROOM_WIDTH*ROOM_HEIGHT)] = {0};
+    Direction_t move_stack[(ROOM_WIDTH*ROOM_HEIGHT)] = {0};
 
-                        break;
-                    }
-                }
-
-                if (walk_idx == 0) break;
-            }
-        }
-
-        if (walk_idx < 0)
-        {
-            if (search_start.x == 0 && search_start.y == 0)
-            {
-                pd_s->system->logToConsole("!! Invalid walk stack idx after counting %d out of %d cells !!", cells_counted, cell_count);
-                //success = false;
-                break;
-            }
-            else
-            {
-                search_start.x = 0;
-                search_start.y = 0;
-                continue;
-            }
-        }
-
-        search_start.x = rand() % ROOM_WIDTH;
-        search_start.y = rand() % ROOM_HEIGHT;
+    // four random walks, until all four paths are connected to a single maze.
+    for (CellType_t path_idx = 0; path_idx < 4; path_idx++)
+    {
+        int32_t walk_idx = 0;
+        // 2. start walk from pre-determined path start.
+        move_stack[0] = DIR_NONE;
+        coord_stack[0].x = path_starts[path_idx].x;
+        coord_stack[0].y = path_starts[path_idx].y;
 
         // 3. walk and set cells 'open' until reaching either a foreign open cell (LINK), a self open cell (LOOP), or a DEAD END
-        Vector2Int_t curr = walk_stack[walk_idx];
-        // - set current cell to OPEN; we will change this to CLOSED if a loop is detected.
-        // - in either case, it is now marked as resolved and will not be checked again.
-        cell_grid[curr.x][curr.y] = CELL_OPEN;
-        // - increment the count of resolved cells (the loop break condition).
-        cells_counted++;
-
-        // - check valid directions from current cell
-        bool dirs_in_bounds[DIR_COUNT] =
+        while (walk_idx >= 0)
         {
-            curr.x > ROOM_MIN_X && last_move != DIR_RIGHT,
-            curr.y > ROOM_MIN_Y && last_move != DIR_DOWN,
-            curr.x < ROOM_MAX_X && last_move != DIR_LEFT,
-            curr.y < ROOM_MAX_Y && last_move != DIR_UP,
-        };
+            Vector2Int_t curr = coord_stack[walk_idx];
+            // - set current cell to current path index; we will change this to CLOSED if a loop is detected.
+            // - in either case, it is now marked as resolved and will not be checked again.
+            cell_grid[curr.x][curr.y] = (CellType_t)path_idx;
 
-        CellType_t dirs_types[DIR_COUNT] =
-        {
-            dirs_in_bounds[DIR_LEFT]  ? cell_grid[curr.x-1][curr.y] : CELL_CLOSED,
-            dirs_in_bounds[DIR_UP]    ? cell_grid[curr.x][curr.y-1] : CELL_CLOSED,
-            dirs_in_bounds[DIR_RIGHT] ? cell_grid[curr.x+1][curr.y] : CELL_CLOSED,
-            dirs_in_bounds[DIR_DOWN]  ? cell_grid[curr.x][curr.y+1] : CELL_CLOSED,
-        };
-
-        Vector2Int_t dirs_coords[DIR_COUNT] =
-        {
-            dirs_in_bounds[DIR_LEFT]  ? (Vector2Int_t){curr.x-1, curr.y} : (Vector2Int_t){0, 0},
-            dirs_in_bounds[DIR_UP]    ? (Vector2Int_t){curr.x, curr.y-1} : (Vector2Int_t){0, 0},
-            dirs_in_bounds[DIR_RIGHT] ? (Vector2Int_t){curr.x+1, curr.y} : (Vector2Int_t){0, 0},
-            dirs_in_bounds[DIR_DOWN]  ? (Vector2Int_t){curr.x, curr.y+1} : (Vector2Int_t){0, 0},
-        };
-
-        int dir_count = 0;
-        Direction_t dir_indices[DIR_COUNT] = {DIR_NONE};
-
-        for (int i = DIR_LEFT; i < DIR_COUNT; i++)
-        {
-            if (!dirs_in_bounds[i]) continue;
-
-            switch(dirs_types[i])
+            // - check valid directions from current cell
+            bool dirs_in_bounds[DIR_COUNT] =
             {
-                case CELL_OPEN:
-                    // ** LINK ** or ** LOOP **
-                    pd_s->system->logToConsole("Link/Loop [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
-                            dirs_coords[i].x, dirs_coords[i].y, walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
-                    // check for loop
-                    for (uint16_t j = 0; j < walk_idx-1; j++)
-                    {
-                        if (walk_stack[j].x == dirs_coords[i].x
-                         && walk_stack[j].y == dirs_coords[i].y)
-                        {
-                            // ** LOOP ** confirmed
-                            // set current cell closed
-                            cell_grid[curr.x][curr.y] = CELL_CLOSED;
-                            break;
-                        }
-                    }
-                    // end walk
-                    walk_idx = -1;
-                    break;
-                case CELL_NONE:
-                    // cell is unresolved, count and list it as option for next step
-                    dir_indices[dir_count] = i;
-                    dir_count++;
-                    break;
-                case CELL_CLOSED:
-                    // cell is a wall, not counted as an option
-                  break;
+                curr.x > ROOM_MIN_X && move_stack[walk_idx] != DIR_RIGHT,
+                curr.y > ROOM_MIN_Y && move_stack[walk_idx] != DIR_DOWN,
+                curr.x < ROOM_MAX_X && move_stack[walk_idx] != DIR_LEFT,
+                curr.y < ROOM_MAX_Y && move_stack[walk_idx] != DIR_UP,
+            };
+
+            CellType_t dirs_types[DIR_COUNT] =
+            {
+                dirs_in_bounds[DIR_LEFT]  ? cell_grid[curr.x-1][curr.y] : CELL_BORDER,
+                dirs_in_bounds[DIR_UP]    ? cell_grid[curr.x][curr.y-1] : CELL_BORDER,
+                dirs_in_bounds[DIR_RIGHT] ? cell_grid[curr.x+1][curr.y] : CELL_BORDER,
+                dirs_in_bounds[DIR_DOWN]  ? cell_grid[curr.x][curr.y+1] : CELL_BORDER,
+            };
+
+            Vector2Int_t dirs_coords[DIR_COUNT] =
+            {
+                dirs_in_bounds[DIR_LEFT]  ? (Vector2Int_t){curr.x-1, curr.y} : (Vector2Int_t){0, 0},
+                dirs_in_bounds[DIR_UP]    ? (Vector2Int_t){curr.x, curr.y-1} : (Vector2Int_t){0, 0},
+                dirs_in_bounds[DIR_RIGHT] ? (Vector2Int_t){curr.x+1, curr.y} : (Vector2Int_t){0, 0},
+                dirs_in_bounds[DIR_DOWN]  ? (Vector2Int_t){curr.x, curr.y+1} : (Vector2Int_t){0, 0},
+            };
+
+            int dir_count = 0;
+            Direction_t dir_indices[DIR_COUNT] = {DIR_NONE};
+            bool loop = false;
+
+            for (int i = DIR_LEFT; i < DIR_COUNT; i++)
+            {
+                if (!dirs_in_bounds[i]) continue;
+
+                if (dirs_types[i] == (CellType_t)path_idx)
+                {
+                    // ** LOOP **
+                    // skip it as if it were a border.
+                    //pd_s->system->logToConsole("Loop [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                    //    dirs_coords[i].x, dirs_coords[i].y, coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
+                    continue;
+                }
+
+                switch(dirs_types[i])
+                {
+                    case CELL_CLOSED:
+                        // cell is unresolved, count and list it as option for next step
+                        dir_indices[dir_count] = i;
+                        dir_count++;
+                        break;
+                    case CELL_BORDER:
+                        // cell is not counted as an option
+                        continue;
+                    case CELL_PATH_0:
+                    case CELL_PATH_1:
+                    case CELL_PATH_2:
+                    case CELL_PATH_3:
+                        // ** LINK ** 
+                        //pd_s->system->logToConsole("Link [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                        //        dirs_coords[i].x, dirs_coords[i].y, coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
+                        // end walk
+                        walk_idx = -1;
+                        break;
+                }
+
+                if (walk_idx == -1) break;
             }
 
-            if (walk_idx == -1) break;
-        }
+            if (walk_idx == -1 || loop) continue;
 
-        if (walk_idx == -1) continue;
+            // check for dead end
+            if (dir_count == 0)
+            {
+                // ** DEAD END **
+                // backtrack one.
+                //pd_s->system->logToConsole("Dead end reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                //    coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
+                walk_idx--;
+                continue;
+            }
 
-        // check for dead end
-        if (dir_count == 0)
-        {
-            // ** DEAD END **
-            // end walk.
-            // TODO: implement backtracking for dead ends? not sure if necessary
-            pd_s->system->logToConsole("Dead end reached in walk between [0][%d,%d] and [%d][%d,%d].",
-                walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
-            walk_idx = -1;
-            continue;
-        }
+            // check if current walk exceeded allowed length;
+            // NOTE: this check must NEVER happen before the other stop conditions are tested.
+            if (walk_idx >= walk_max_len)
+            {
+                // ** WALK LIMIT REACHED **
+                // end walk.
+                //pd_s->system->logToConsole("Limit reached in walk between [0][%d,%d] and [%d][%d,%d].",
+                //    coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
+                walk_idx = -1;
+            }
 
-        // check if current walk exceeded allowed length;
-        // NOTE: this check must NEVER happen before the other stop conditions are tested.
-        if (walk_idx >= walk_max_len)
-        {
-            // ** WALK LIMIT REACHED **
-            // end walk.
-            pd_s->system->logToConsole("Limit reached in walk between [0][%d,%d] and [%d][%d,%d].",
-                walk_stack[0].x, walk_stack[0].y, walk_idx, walk_stack[walk_idx].x, walk_stack[walk_idx].y);
-            walk_idx = -1;
-            continue;
-        }
+            // ** WALK CONTINUES **
+            Direction_t chosen_dir = DIR_NONE;
 
-        // ** WALK CONTINUES **
-        Direction_t chosen_dir = DIR_NONE;
+            // if only one direction is valid, select it
+            if (dir_count == 1)
+            {
+                chosen_dir = dir_indices[0];
+            }
+            // else, select randomly from valid options
+            else
+            {
+                chosen_dir = dir_indices[rand() % dir_count];
+            }
 
-        // if only one direction is valid, select it
-        if (dir_count == 1)
-        {
-            chosen_dir = dir_indices[0];
-        }
-        // else, select randomly from valid options
-        else
-        {
-            chosen_dir = dir_indices[rand() % dir_count];
-        }
+            walk_idx++;
+            move_stack[walk_idx] = chosen_dir;
 
-        last_move = chosen_dir;
-        walk_idx++;
-
-        switch(chosen_dir)
-        {
-            case DIR_LEFT:
-                walk_stack[walk_idx].x = curr.x-1;
-                walk_stack[walk_idx].y = curr.y;
-                break;
-            case DIR_UP:
-                walk_stack[walk_idx].x = curr.x;
-                walk_stack[walk_idx].y = curr.y-1;
-                break;
-            case DIR_RIGHT:
-                walk_stack[walk_idx].x = curr.x+1;
-                walk_stack[walk_idx].y = curr.y;
-                break;
-            case DIR_DOWN:
-                walk_stack[walk_idx].x = curr.x;
-                walk_stack[walk_idx].y = curr.y+1;
-                break;
-            case DIR_NONE:
-            case DIR_COUNT:
-              // should not happen, end walk.
-              walk_idx = -1;
-              pd_s->system->logToConsole("!! Invalid 'chosen direction' in maze generation !!");
-              success = false;
-              break;
+            switch(chosen_dir)
+            {
+                case DIR_LEFT:
+                case DIR_UP:
+                case DIR_RIGHT:
+                case DIR_DOWN:
+                    coord_stack[walk_idx].x = dirs_coords[chosen_dir].x;
+                    coord_stack[walk_idx].y = dirs_coords[chosen_dir].y;
+                    break;
+                case DIR_NONE:
+                case DIR_COUNT:
+                  // should not happen, end walk.
+                  walk_idx = -1;
+                  pd_s->system->logToConsole("!! Invalid 'chosen direction' in maze generation !!");
+                  success = false;
+                  break;
+            }
         }
     }
 
-    // 4. presumably all cells have now been resolved and the caller can now use the maze grid.
+    // 4. presumably all paths have now been linked and the caller can now use the maze grid.
     return success;
 }
 
@@ -521,7 +445,10 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
             switch(maze_grid[x][y])
             {
-            case CELL_OPEN:
+            case CELL_PATH_0:
+            case CELL_PATH_1:
+            case CELL_PATH_2:
+            case CELL_PATH_3:
                 tile->bitmap_idx = BITMAP_FLOOR;
                 tile->flags |= TILEFLAG_WALKABLE;
 
@@ -534,10 +461,11 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
                 break;
             case CELL_CLOSED:
+            case CELL_BORDER:
                 tile->bitmap_idx = BITMAP_WALL;
                 tile->flags = TILEFLAG_NONE;
                 break;
-            case CELL_NONE:
+            default:
                 pd_s->system->logToConsole("!! Unresolved cell in returned maze grid !!");
                 tile->bitmap_idx = BITMAP_PLAYER;
                 tile->flags = TILEFLAG_NONE;
