@@ -934,11 +934,12 @@ static int update(void* userdata)
 
     if (eph.current_room_ptr != NULL)
     {
-        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
-
         draw_room(pd, eph.current_room_ptr, eph.camera_offset);
         draw_adjacent_rooms(pd, eph.camera_offset);
+
+        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
+        pd->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
+        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
     }
 
 	pd->system->drawFPS(0,0);
