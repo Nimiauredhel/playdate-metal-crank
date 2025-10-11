@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.14)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 
+if (TOOLCHAIN STREQUAL "armgcc")
+    set(CMAKE_ASM_COMPILER "/usr/bin/arm-none-eabi-gcc-ar")
+    set(CMAKE_C_COMPILER "/usr/bin/arm-none-eabi-gcc")
+    set(CMAKE_CXX_COMPILER "/usr/bin/arm-none-eabi-c++")
+endif()
+
 set(ENVSDK $ENV{PLAYDATE_SDK_PATH})
 
 if (NOT ${ENVSDK} STREQUAL "")
@@ -30,6 +36,8 @@ set(PLAYDATE_GAME_NAME metal_crank)
 set(PLAYDATE_GAME_DEVICE metal_crank_DEVICE)
 
 project(${PLAYDATE_GAME_NAME} C ASM)
+
+add_compile_options(--specs=/lib/arm-none-eabi/newlib/nosys.specs)
 
 if (TOOLCHAIN STREQUAL "armgcc")
 	add_executable(${PLAYDATE_GAME_DEVICE} src/main.c)

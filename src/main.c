@@ -1,6 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-
 #include "pd_api.h"
 
 #define TILE_SIZE_PX (40)
