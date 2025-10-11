@@ -30,7 +30,7 @@
 
 #define ENTITIES_GLOBAL_MAX (16)
 #define ENTITIES_LOCAL_MAX (4)
-#define BITMAP_COUNT (5)
+#define BITMAP_COUNT (10)
 
 typedef enum CellType
 {
@@ -54,11 +54,16 @@ typedef enum Direction
 
 typedef enum BitmapIndices
 {
-    BITMAP_WALL = 0,
-    BITMAP_FLOOR = 1,
-    BITMAP_PLAYER = 2,
-    BITMAP_DOOR_H = 3,
-    BITMAP_DOOR_V = 4,
+    BITMAP_FLOOR_00 = 0,
+    BITMAP_FLOOR_01 = 1,
+    BITMAP_FLOOR_02 = 2,
+    BITMAP_FLOOR_03 = 3,
+    BITMAP_WALL = 4,
+    BITMAP_TABLE = 5,
+    BITMAP_CRATE = 6,
+    BITMAP_PLAYER = 7,
+    BITMAP_DOOR_H = 8,
+    BITMAP_DOOR_V = 9,
 } BitmapIndices_t;
 
 typedef enum TileFlags
@@ -160,8 +165,13 @@ static int update(void* userdata);
 
 static const char bitmap_paths[BITMAP_COUNT][16] =
 {
+    "floor00.png",
+    "floor01.png",
+    "floor02.png",
+    "floor03.png",
     "wall.png",
-    "floor.png",
+    "table.png",
+    "crate.png",
     "player.png",
     "doorh.png",
     "doorv.png",
@@ -497,13 +507,19 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
              * TODO: create room generation tests to enforce this assumption.
              **/
 
+            uint8_t adj_space =
+            (x == (ROOM_MIN_X+1) || maze_grid[x-1][y] >= CELL_PATH_0)
+             + (x == (ROOM_MAX_X-1) || maze_grid[x+1][y] >= CELL_PATH_0)
+             + (y == (ROOM_MIN_Y+1) || maze_grid[x][y-1] >= CELL_PATH_0)
+             + (y == (ROOM_MAX_Y-1) || maze_grid[x][y+1] >= CELL_PATH_0);
+
             switch(maze_grid[x][y])
             {
             case CELL_PATH_0:
             case CELL_PATH_1:
             case CELL_PATH_2:
             case CELL_PATH_3:
-                tile->bitmap_idx = BITMAP_FLOOR;
+                tile->bitmap_idx = BITMAP_FLOOR_00 + maze_grid[x][y];
                 tile->flags |= TILEFLAG_WALKABLE;
 
                 if (player_start && (!placed_player || (rand() % 100) > 80))
@@ -516,7 +532,8 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
                 break;
             case CELL_CLOSED:
             case CELL_BORDER:
-                tile->bitmap_idx = BITMAP_WALL;
+                tile->bitmap_idx = adj_space >= 4 ? BITMAP_TABLE
+                    : adj_space >= 3 ? BITMAP_CRATE : BITMAP_WALL;
                 tile->flags = TILEFLAG_NONE;
                 break;
             default:
