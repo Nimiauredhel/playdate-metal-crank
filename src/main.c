@@ -161,6 +161,9 @@ typedef struct EphemeralState
     LCDBitmap* bitmaps[BITMAP_COUNT];
 } EphemeralState_t;
 
+PDSynth *synth = NULL;
+SoundSequence *sequence = NULL;
+
 static int update(void* userdata);
 
 static const char bitmap_paths[BITMAP_COUNT][16] =
@@ -206,6 +209,7 @@ static int8_t sign(int num)
 static void set_player_room(uint16_t room_idx)
 {
     if (eph.player_ptr == NULL) return;
+
     pd_s->system->logToConsole("Moving player to room #%d.", room_idx);
     eph.player_ptr->current_room_idx = room_idx;
 }
@@ -738,6 +742,23 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
         eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
         eph.camera_offset = eph.camera_offset_target;
+
+        synth = pd->sound->synth->newSynth();
+        sequence = pd->sound->sequence->newSequence();
+        int ret = pd->sound->sequence->loadMIDIFile(sequence, "plowthrough.mid");
+        pd->system->logToConsole("Load MIDI result: %d", ret);
+
+        if (ret == 1)
+        {
+            pd->sound->sequence->setTime(sequence, 0);
+            pd->sound->sequence->play(sequence, NULL, pd);
+            ret = pd->sound->sequence->isPlaying(sequence);
+            pd->system->logToConsole("Sequence is playing: %d", ret);
+            ret = pd->sound->sequence->getLength(sequence);
+            pd->system->logToConsole("Sequence length: %d", ret);
+            ret = pd->sound->sequence->getTrackCount(sequence);
+            pd->system->logToConsole("Sequence track count: %d", ret);
+        }
 
         // calibrate accelerometer
         pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
