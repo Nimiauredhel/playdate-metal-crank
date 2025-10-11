@@ -144,6 +144,7 @@ typedef struct EphemeralState
     Vector2Int_t mov_speed;
     GlobalEntity_t *player_ptr;
     Room_t *current_room_ptr;
+    Room_t *adjacent_room_ptrs[4];
     LCDFont* font;
     LCDBitmap* bitmaps[BITMAP_COUNT];
 } EphemeralState_t;
@@ -164,6 +165,13 @@ static const int mov_accel_max = 30;
 static const int mov_speed_min = 125;
 static const int mov_speed_max = 250;
 static const Vector2Int_t default_camera_offset = { 200, 120 };
+static const Vector2Int_t adjacent_room_offsets[4] =
+{
+    {-(ROOM_WIDTH*TILE_SIZE_PX), 0},
+    {0, -(ROOM_HEIGHT*TILE_SIZE_PX)},
+    {+(ROOM_WIDTH*TILE_SIZE_PX), 0},
+    {0, +(ROOM_HEIGHT*TILE_SIZE_PX)},
+};
 
 static PlaydateAPI *pd_s = NULL;
 static SerializableState_t ser = {0};
@@ -190,6 +198,11 @@ static void set_current_room(uint16_t room_idx)
     pd_s->system->logToConsole("Setting current room to #%d.", room_idx);
     ser.current_room_idx = room_idx;
     eph.current_room_ptr = ser.level.rooms+room_idx;
+
+    eph.adjacent_room_ptrs[0] = eph.current_room_ptr->coord.x > LEVEL_MIN_X ? eph.current_room_ptr-1 : NULL;
+    eph.adjacent_room_ptrs[1] = eph.current_room_ptr->coord.y > LEVEL_MIN_Y ? eph.current_room_ptr-LEVEL_WIDTH : NULL;
+    eph.adjacent_room_ptrs[2] = eph.current_room_ptr->coord.x < LEVEL_MAX_X ? eph.current_room_ptr+1 : NULL;
+    eph.adjacent_room_ptrs[3] = eph.current_room_ptr->coord.y < LEVEL_MAX_Y ? eph.current_room_ptr+LEVEL_WIDTH : NULL;
 }
 
 static TileFlags_t tile_flags_at_pos(Room_t *room, int tile_x, int tile_y)
@@ -244,10 +257,10 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
     }
 
     // - add random border tiles in the room interior to discourage the tendency towards 'open space'
-    uint8_t num_rand_border = rand() % ((ROOM_WIDTH+ROOM_HEIGHT)/4);
+    uint8_t num_rand_border = rand() % ((ROOM_WIDTH+ROOM_HEIGHT)/8);
     for (uint8_t i = 0; i < num_rand_border; i++)
     {
-        cell_grid[rand() % (2+((ROOM_MAX_X-ROOM_MIN_X)-2))][rand() % (2+((ROOM_MAX_Y-ROOM_MIN_Y)-2))] = CELL_BORDER;
+        cell_grid[rand() % ((ROOM_MIN_X+2)+((ROOM_MAX_X-ROOM_MIN_X)-2))][rand() % ((ROOM_MIN_Y+2)+((ROOM_MAX_Y-ROOM_MIN_Y)-2))] = CELL_BORDER;
     }
 
     for (int path_num = 0; path_num < 4; path_num++)
@@ -619,6 +632,21 @@ static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
     }
 }
 
+static void draw_adjacent_rooms(PlaydateAPI *pd, Vector2Int_t offset)
+{
+    Vector2Int_t neighbour_offset = offset;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        if (eph.adjacent_room_ptrs[i] != NULL)
+        {
+            neighbour_offset.x = offset.x+adjacent_room_offsets[i].x;
+            neighbour_offset.y = offset.y+adjacent_room_offsets[i].y;
+            draw_room(pd, eph.adjacent_room_ptrs[i], neighbour_offset);
+        }
+    }
+}
+
 int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 {
 	(void)arg; // arg is currently only used for event = kEventKeyPressed
@@ -864,38 +892,8 @@ static int update(void* userdata)
         snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
         pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
 
-        Vector2Int_t room_offset = eph.camera_offset;
-
-        draw_room(pd, eph.current_room_ptr, room_offset);
-        Vector2Int_t neighbour_offset = room_offset;
-
-        if (ser.current_room_idx < (ROOM_COUNT-1))
-        {
-            neighbour_offset.x = room_offset.x+(ROOM_WIDTH*TILE_SIZE_PX);
-            neighbour_offset.y = room_offset.y;
-            draw_room(pd, eph.current_room_ptr+1, neighbour_offset);
-
-            if (ser.current_room_idx < ((ROOM_COUNT-1)-LEVEL_WIDTH))
-            {
-                neighbour_offset.x = room_offset.x;
-                neighbour_offset.y = room_offset.y+(ROOM_HEIGHT*TILE_SIZE_PX);
-                draw_room(pd, eph.current_room_ptr+LEVEL_WIDTH, neighbour_offset);
-            }
-        }
-
-        if (ser.current_room_idx > 0)
-        {
-            neighbour_offset.x = room_offset.x-(ROOM_WIDTH*TILE_SIZE_PX);
-            neighbour_offset.y = room_offset.y;
-            draw_room(pd, eph.current_room_ptr-1, neighbour_offset);
-
-            if (ser.current_room_idx >= LEVEL_WIDTH)
-            {
-                neighbour_offset.x = room_offset.x;
-                neighbour_offset.y = room_offset.y-(ROOM_HEIGHT*TILE_SIZE_PX);
-                draw_room(pd, eph.current_room_ptr-LEVEL_WIDTH, neighbour_offset);
-            }
-        }
+        draw_room(pd, eph.current_room_ptr, eph.camera_offset);
+        draw_adjacent_rooms(pd, eph.camera_offset);
     }
 
 	pd->system->drawFPS(0,0);
