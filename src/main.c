@@ -114,6 +114,12 @@ typedef struct Room
     Entity_t entities[ENTITIES_LOCAL_MAX];
 } Room_t;
 
+typedef struct RoomDrawPositions
+{
+    int32_t x[ROOM_WIDTH];
+    int32_t y[ROOM_HEIGHT];
+} RoomDrawPositions_t;
+
 typedef struct Level
 {
     Room_t rooms[LEVEL_WIDTH*LEVEL_HEIGHT];
@@ -145,6 +151,7 @@ typedef struct EphemeralState
     GlobalEntity_t *player_ptr;
     Room_t *current_room_ptr;
     Room_t *adjacent_room_ptrs[4];
+    RoomDrawPositions_t room_draw_positions;
     LCDFont* font;
     LCDBitmap* bitmaps[BITMAP_COUNT];
 } EphemeralState_t;
@@ -572,22 +579,41 @@ bool populate_level(void)
     return true;
 }
 
+static void prepare_room_draw_positions(void)
+{
+    Vector2Int_t draw_pos_scratch = {-TILE_OFFSET_PX, -TILE_OFFSET_PX};
+
+    for (int x = 0; x < ROOM_WIDTH; x++)
+    {
+        draw_pos_scratch.x += TILE_SIZE_PX;
+        eph.room_draw_positions.x[x] = draw_pos_scratch.x;
+    }
+
+    for (int y = 0; y < ROOM_HEIGHT; y++)
+    {
+        draw_pos_scratch.y += TILE_SIZE_PX;
+        eph.room_draw_positions.y[y] = draw_pos_scratch.y;
+    }
+}
+
 static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
 {
-    int draw_min = -TILE_SIZE_PX;
-    Vector2Int_t draw_max = { eph.screen_size.x - 1, eph.screen_size.y - 1 };
+    static const int draw_min = -TILE_SIZE_PX;
+
+    const Vector2Int_t draw_max = { eph.screen_size.x - 1, eph.screen_size.y - 1 };
+
     Vector2Int_t draw_pos = {0};
 
     for (int x = 0; x < ROOM_WIDTH; x++)
     {
-        draw_pos.x = TILE_OFFSET_PX + (x * TILE_SIZE_PX) + offset.x;
+        draw_pos.x = eph.room_draw_positions.x[x] + offset.x;
 
         if (draw_pos.x < draw_min) continue;
         if (draw_pos.x > draw_max.x) break;
 
         for (int y = 0; y < ROOM_HEIGHT; y++)
         {
-            draw_pos.y = TILE_OFFSET_PX + (y * TILE_SIZE_PX) + offset.y;
+            draw_pos.y = eph.room_draw_positions.y[y] + offset.y;
 
             if (draw_pos.y < draw_min) continue;
             if (draw_pos.y > draw_max.y) break;
@@ -689,6 +715,8 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
         }
 
         bool level_init_success = populate_level();
+
+        prepare_room_draw_positions();
 
         eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
         eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
