@@ -209,13 +209,7 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
 
     bool success = true;
 
-    bool paths_connected[4] =
-    {
-        !path_bools[0],
-        !path_bools[1],
-        !path_bools[2],
-        !path_bools[3],
-    };
+    int paths_connected[4] = { -1, -1, -1, -1, };
 
     Vector2Int_t path_starts[4] =
     {
@@ -249,6 +243,13 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
         cell_grid[ROOM_MAX_X][y] = CELL_BORDER;
     }
 
+    // - add random border tiles in the room interior to discourage the tendency towards 'open space'
+    uint8_t num_rand_border = rand() % ((ROOM_WIDTH+ROOM_HEIGHT)/4);
+    for (uint8_t i = 0; i < num_rand_border; i++)
+    {
+        cell_grid[rand() % (2+((ROOM_MAX_X-ROOM_MIN_X)-2))][rand() % (2+((ROOM_MAX_Y-ROOM_MIN_Y)-2))] = CELL_BORDER;
+    }
+
     for (int path_num = 0; path_num < 4; path_num++)
     {
         CellType_t path_idx = (first_path + path_num) % 4;
@@ -261,23 +262,15 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
     Vector2Int_t coord_stack[(ROOM_WIDTH*ROOM_HEIGHT)] = {0};
     Direction_t move_stack[(ROOM_WIDTH*ROOM_HEIGHT)] = {0};
 
+    bool reverse_path_order = (rand() % 2) > 0;
+
     // four random walks, until all four paths are connected to a single maze.
     for (CellType_t path_num = 0; path_num < 4; path_num++)
     {
         CellType_t path_idx = (first_path + path_num) % 4;
+        if (reverse_path_order) path_idx = CELL_PATH_3 - path_idx;
 
         if (!path_bools[path_idx]) continue;
-
-        bool required_connections_left = false;
-
-        for (uint8_t i = 0; i < 4; i++)
-        {
-            if (!paths_connected[i])
-            {
-                required_connections_left = true;
-                break;
-            }
-        }
 
         int32_t walk_idx = 0;
         // 2. start walk from pre-determined path start.
@@ -326,7 +319,7 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
                 if (!dirs_in_bounds[i]) continue;
 
                 if (dirs_types[i] == (CellType_t)path_idx
-                || (required_connections_left && dirs_types[i] >= 0 && paths_connected[dirs_types[i]]))
+                || (dirs_types[i] >= 0 && paths_connected[dirs_types[i]] == path_idx))
                 {
                     // ** LOOP **
                     // skip it as if it were a border.
@@ -353,7 +346,7 @@ static bool generate_maze(CellType_t cell_grid[ROOM_WIDTH][ROOM_HEIGHT], const b
                         //pd_s->system->logToConsole("Link [%d,%d] reached in walk between [0][%d,%d] and [%d][%d,%d].",
                         //        dirs_coords[i].x, dirs_coords[i].y, coord_stack[0].x, coord_stack[0].y, walk_idx, coord_stack[walk_idx].x, coord_stack[walk_idx].y);
                         // end walk
-                        paths_connected[path_idx] = true;
+                        paths_connected[path_idx] = false;
                         paths_connected[dirs_types[i]] = true;
                         walk_idx = -1;
                         break;
