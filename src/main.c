@@ -27,6 +27,7 @@
 
 #define ENTITIES_GLOBAL_MAX (16)
 #define ENTITIES_LOCAL_MAX (4)
+#define BITMAP_SIZE (419)
 #define BITMAP_COUNT (10)
 
 typedef enum CellType
@@ -70,6 +71,14 @@ typedef enum TileFlags
     TILEFLAG_DOOR_H = 0x02,
     TILEFLAG_DOOR_V = 0x04,
 } TileFlags_t;
+
+typedef enum GamePhase
+{
+    PHASE_PREINIT = 0,
+    PHASE_GAMEPLAY = 1,
+    PHASE_PAUSED = 2,
+    PHASE_TERMINATING = 3,
+} GamePhase_t;
 
 typedef struct Vector2Int
 {
@@ -139,6 +148,8 @@ typedef struct SerializableState
 
 typedef struct EphemeralState
 {
+    GamePhase_t phase;
+    float delta_time;
     Vector2Int_t screen_size;
     PDButtons buttons_current;
     PDButtons buttons_pushed;
@@ -155,13 +166,14 @@ typedef struct EphemeralState
     Room_t *adjacent_room_ptrs[4];
     RoomDrawPositions_t room_draw_positions;
     LCDFont* font;
-    LCDBitmap* bitmaps[BITMAP_COUNT];
+    uint8_t bitmaps_buffer[BITMAP_COUNT][BITMAP_SIZE];
+    LCDBitmap *bitmaps[BITMAP_COUNT];
 } EphemeralState_t;
 
 PDSynth *synth = NULL;
 SoundSequence *sequence = NULL;
 
-static int update(void* userdata);
+static int game_update(void* userdata);
 
 static const char bitmap_paths[BITMAP_COUNT][16] =
 {
@@ -458,7 +470,7 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
     static CellType_t maze_grid[ROOM_WIDTH][ROOM_HEIGHT] = {0};
 
-    pd_s->system->logToConsole("Populating room [%d,%d].", level_x, level_y);
+    //pd_s->system->logToConsole("Populating room [%d,%d].", level_x, level_y);
 
     uint16_t level_idx = level_x + (level_y * LEVEL_WIDTH);
     Room_t *room = ser.level.rooms + level_idx;
@@ -691,99 +703,104 @@ static void draw_adjacent_rooms(PlaydateAPI *pd, Vector2Int_t offset)
     }
 }
 
-int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
+static void game_init(void)
 {
-	(void)arg; // arg is currently only used for event = kEventKeyPressed
+    const char* err;
 
-	if (event == kEventInit)
-	{
-		const char* err;
-        pd_s = pd;
+    pd_s->system->logToConsole("Initializing game.");
 
-        pd->system->logToConsole("Initializing game.");
+    pd_s->system->setPeripheralsEnabled(kAccelerometer);
+    srand(pd_s->system->getSecondsSinceEpoch(NULL));
 
-        pd->system->setPeripheralsEnabled(kAccelerometer);
-        srand(pd->system->getSecondsSinceEpoch(NULL));
+    bzero(&ser, sizeof(ser));
+    bzero(&eph, sizeof(eph));
 
-        bzero(&ser, sizeof(ser));
-        bzero(&eph, sizeof(eph));
+    eph.phase = PHASE_PREINIT;
+    eph.screen_size.x = pd_s->display->getWidth();
+    eph.screen_size.y = pd_s->display->getHeight();
+    eph.camera_offset_target = default_camera_offset;
+    eph.font = pd_s->graphics->loadFont(fontpath, &err);
+    
+    if ( eph.font == NULL )
+    {
+        pd_s->system->error("%s:%i Couldn't load font %s: %s", __FILE__, __LINE__, fontpath, err);
+    }
 
-        eph.screen_size.x = pd->display->getWidth();
-        eph.screen_size.y = pd->display->getHeight();
-        eph.camera_offset_target = default_camera_offset;
-        eph.font = pd->graphics->loadFont(fontpath, &err);
-		
-		if ( eph.font == NULL )
+    for (uint16_t i = 0; i < BITMAP_COUNT; i++)
+    {
+        *((uint16_t *)eph.bitmaps_buffer[i]) = 32;
+        *((uint16_t *)(eph.bitmaps_buffer[i]+2)) = 32;
+        *((uint16_t *)(eph.bitmaps_buffer[i]+4)) = 419;
+        eph.bitmaps[i] = (LCDBitmap *)eph.bitmaps_buffer[i];
+        pd_s->graphics->loadIntoBitmap(bitmap_paths[i], eph.bitmaps[i], &err);
+
+        if (eph.bitmaps[i] == NULL )
         {
-            pd->system->error("%s:%i Couldn't load font %s: %s", __FILE__, __LINE__, fontpath, err);
+            pd_s->system->error("%s:%i Couldn't load bitmap %s: %s", __FILE__, __LINE__, bitmap_paths[i], err);
         }
-
-        for (uint16_t i = 0; i < BITMAP_COUNT; i++)
+        else
         {
-            eph.bitmaps[i] = pd->graphics->loadBitmap(bitmap_paths[i], &err);
-
-            if (eph.bitmaps[i] == NULL )
-            {
-                pd->system->error("%s:%i Couldn't load bitmap %s: %s", __FILE__, __LINE__, bitmap_paths[i], err);
-            }
-            else
-            {
-                pd->system->logToConsole("Loaded bitmap [%s] to index [%d].", bitmap_paths[i], i);
-            }
+            //pd_s->system->logToConsole("Loaded bitmap [%s] to index [%d], address [%p].", bitmap_paths[i], i, eph.bitmaps[i]);
         }
+    }
 
-        bool level_init_success = populate_level();
+    bool level_init_success = populate_level();
 
-        prepare_room_draw_positions();
+    prepare_room_draw_positions();
 
-        eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
-        eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
-        eph.camera_offset = eph.camera_offset_target;
+    eph.camera_offset_target.x = (default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX;
+    eph.camera_offset_target.y = (default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX;
+    eph.camera_offset = eph.camera_offset_target;
 
-        synth = pd->sound->synth->newSynth();
-        sequence = pd->sound->sequence->newSequence();
-        int ret = pd->sound->sequence->loadMIDIFile(sequence, "plowthrough.mid");
-        pd->system->logToConsole("Load MIDI result: %d", ret);
+    synth = pd_s->sound->synth->newSynth();
+    sequence = pd_s->sound->sequence->newSequence();
+    int ret = pd_s->sound->sequence->loadMIDIFile(sequence, "plowthrough.mid");
 
-        if (ret == 1)
-        {
-            pd->sound->sequence->setTime(sequence, 0);
-            pd->sound->sequence->play(sequence, NULL, pd);
-            ret = pd->sound->sequence->isPlaying(sequence);
-            pd->system->logToConsole("Sequence is playing: %d", ret);
-            ret = pd->sound->sequence->getLength(sequence);
-            pd->system->logToConsole("Sequence length: %d", ret);
-            ret = pd->sound->sequence->getTrackCount(sequence);
-            pd->system->logToConsole("Sequence track count: %d", ret);
-        }
+    if (ret == 1)
+    {
+        pd_s->sound->sequence->setTime(sequence, 0);
+        pd_s->sound->sequence->play(sequence, NULL, pd_s);
+    }
 
-        // calibrate accelerometer
-        pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
-        memcpy(&eph.accelerometer_center, &eph.accelerometer_raw, sizeof(Vector3_t));
+    // calibrate accelerometer
+    pd_s->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
+    memcpy(&eph.accelerometer_center, &eph.accelerometer_raw, sizeof(Vector3_t));
 
-        pd->display->setRefreshRate(50);
-        pd->system->resetElapsedTime();
-		// Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
-		pd->system->setUpdateCallback(update, pd);
-	}
-	
-	return 0;
+    pd_s->display->setRefreshRate(50);
+    pd_s->system->resetElapsedTime();
+    // Note: If you set an update callback in the kEventInit handler, the system assumes the game is pure C and doesn't run any Lua code in the game
+    pd_s->system->setUpdateCallback(game_update, pd_s);
+    eph.phase = PHASE_GAMEPLAY;
 }
 
-static int update(void* userdata)
+static void gameplay_draw(void)
 {
-	PlaydateAPI* pd = userdata;
+    // draw gfx
+    static char text_buff[32] = {0};
 
-    float deltaTime = pd->system->getElapsedTime();
-    pd->system->resetElapsedTime();
+	pd_s->graphics->clear(kColorWhite);
+	pd_s->graphics->setFont(eph.font);
 
-    char text_buff[32] = {0};
+    if (eph.current_room_ptr != NULL)
+    {
+        draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
+        draw_adjacent_rooms(pd_s, eph.camera_offset);
 
+        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
+        pd_s->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
+        pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
+    }
+
+	pd_s->system->drawFPS(0,0);
+}
+
+static int gameplay_update(void)
+{
     // get input
-    pd->system->getButtonState(&eph.buttons_current, &eph.buttons_pushed, &eph.buttons_released);
-    eph.crank.x = pd->system->getCrankAngle();
-    eph.crank.y = pd->system->getCrankChange();
-    pd->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
+    pd_s->system->getButtonState(&eph.buttons_current, &eph.buttons_pushed, &eph.buttons_released);
+    eph.crank.x = pd_s->system->getCrankAngle();
+    eph.crank.y = pd_s->system->getCrankChange();
+    pd_s->system->getAccelerometer(&eph.accelerometer_raw.x, &eph.accelerometer_raw.y, &eph.accelerometer_raw.z);
 
     // if crank is moving, calibrate accelerometer
     if (eph.crank.y != 0)
@@ -798,7 +815,7 @@ static int update(void* userdata)
     if (eph.player_ptr != NULL)
     {
         Vector2Int_t mov_delta = {0};
-        float crank_value = powf(eph.crank.y, 2) * deltaTime;
+        float crank_value = powf(eph.crank.y, 2) * eph.delta_time;
 
         int target_speed = mov_speed_min + ((mov_speed_max - mov_speed_min) * crank_value);
         int mov_accel_val = mov_accel_min + ((mov_accel_max - mov_accel_min) * crank_value);
@@ -835,8 +852,8 @@ static int update(void* userdata)
             if (eph.mov_speed.y < directional_target_speed.y) eph.mov_speed.y = directional_target_speed.y;
         }
 
-        mov_delta.x = eph.mov_speed.x * deltaTime;
-        mov_delta.y = eph.mov_speed.y * deltaTime;
+        mov_delta.x = eph.mov_speed.x * eph.delta_time;
+        mov_delta.y = eph.mov_speed.y * eph.delta_time;
 
         if (mov_delta.x != 0 || mov_delta.y != 0)
         {
@@ -922,7 +939,7 @@ static int update(void* userdata)
             }
         }
 
-        float camera_follow_speed = 3.5f * deltaTime;
+        float camera_follow_speed = 3.5f * eph.delta_time;
 
         eph.camera_offset_target.x = ((default_camera_offset.x - eph.player_ptr->entity.position_px.x) - TILE_SIZE_PX) - eph.camera_peek_offset.x;
         eph.camera_offset_target.y = ((default_camera_offset.y - eph.player_ptr->entity.position_px.y) - TILE_SIZE_PX) - eph.camera_peek_offset.y;
@@ -945,23 +962,61 @@ static int update(void* userdata)
             eph.camera_offset.y += (eph.camera_offset_target.y - eph.camera_offset.y) * camera_follow_speed;
         }
     }
-	
-    // draw gfx
-	pd->graphics->clear(kColorWhite);
-	pd->graphics->setFont(eph.font);
-
-    if (eph.current_room_ptr != NULL)
-    {
-        draw_room(pd, eph.current_room_ptr, eph.camera_offset);
-        draw_adjacent_rooms(pd, eph.camera_offset);
-
-        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
-        pd->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
-        pd->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
-    }
-
-	pd->system->drawFPS(0,0);
+    gameplay_draw();
 
 	return 1;
+}
+
+static int game_update(void* userdata)
+{
+    if (pd_s == NULL) return 1;
+
+    eph.delta_time = pd_s->system->getElapsedTime();
+    pd_s->system->resetElapsedTime();
+
+    switch(eph.phase)
+    {
+    case PHASE_PREINIT:
+        return 1;
+    case PHASE_GAMEPLAY:
+        return gameplay_update();
+    case PHASE_PAUSED:
+        return 1;
+    case PHASE_TERMINATING:
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
+{
+	(void)arg; // arg is currently only used for event = kEventKeyPressed
+
+    switch(event)
+    {
+    case kEventInit:
+        pd_s = pd;
+        game_init();
+        break;
+    case kEventInitLua:
+    case kEventLock:
+    case kEventUnlock:
+    case kEventPause:
+    case kEventResume:
+    case kEventTerminate:
+    case kEventKeyPressed:
+    case kEventKeyReleased:
+    case kEventLowPower:
+    case kEventMirrorStarted:
+    case kEventMirrorEnded:
+      break;
+    }
+
+        if (event == kEventInit)
+	{
+	}
+	
+	return 0;
 }
 
