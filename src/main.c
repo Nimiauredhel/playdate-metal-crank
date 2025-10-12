@@ -28,7 +28,7 @@
 #define ENTITIES_GLOBAL_MAX (16)
 #define ENTITIES_LOCAL_MAX (4)
 #define BITMAP_SIZE (419)
-#define BITMAP_COUNT (10)
+#define BITMAP_COUNT (11)
 
 typedef enum CellType
 {
@@ -59,9 +59,10 @@ typedef enum BitmapIndices
     BITMAP_WALL = 4,
     BITMAP_TABLE = 5,
     BITMAP_CRATE = 6,
-    BITMAP_PLAYER = 7,
-    BITMAP_DOOR_H = 8,
-    BITMAP_DOOR_V = 9,
+    BITMAP_DOOR_H = 7,
+    BITMAP_DOOR_V = 8,
+    BITMAP_PLAYER = 9,
+    BITMAP_NPC = 10,
 } BitmapIndices_t;
 
 typedef enum TileFlags
@@ -184,9 +185,10 @@ static const char bitmap_paths[BITMAP_COUNT][16] =
     "wall.png",
     "table.png",
     "crate.png",
-    "player.png",
     "doorh.png",
     "doorv.png",
+    "player.png",
+    "npc.png",
 };
 static const char* fontpath = "/System/Fonts/Asheville-Sans-14-Bold.pft";
 static const int mov_accel_min = 15;
@@ -478,8 +480,8 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
     room->coord.y = level_y;
 
     Tile_t *tile = NULL;
-    bool placed_player = false;
-    Vector2Int_t player_coord = {0};
+    bool placed_entity = false;
+    Vector2Int_t entity_coord = {0};
 
     const bool door_bools[4] =
     {
@@ -535,11 +537,11 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
                 tile->bitmap_idx = BITMAP_FLOOR_00 + maze_grid[x][y];
                 tile->flags |= TILEFLAG_WALKABLE;
 
-                if (player_start && (!placed_player || (rand() % 100) > 80))
+                if (!placed_entity || ((rand() % 100) > 80))
                 {
-                    player_coord.x = x;
-                    player_coord.y = y;
-                    placed_player = true;
+                    entity_coord.x = x;
+                    entity_coord.y = y;
+                    placed_entity = true;
                 }
 
                 break;
@@ -575,12 +577,22 @@ static bool populate_room(uint16_t level_x, uint16_t level_y, bool player_start)
 
     if (player_start && eph.player_ptr != NULL)
     {
-        // place player
-        uint16_t room_idx = level_x + (level_y * LEVEL_WIDTH);
-        eph.player_ptr->entity.position_px.x = player_coord.x * TILE_SIZE_PX;
-        eph.player_ptr->entity.position_px.y = player_coord.y * TILE_SIZE_PX;
-        set_player_room(room_idx);
-        set_current_room(room_idx);
+        if(eph.player_ptr != NULL)
+        {
+            // place player
+            uint16_t room_idx = level_x + (level_y * LEVEL_WIDTH);
+            eph.player_ptr->entity.position_px.x = entity_coord.x * TILE_SIZE_PX;
+            eph.player_ptr->entity.position_px.y = entity_coord.y * TILE_SIZE_PX;
+            set_player_room(room_idx);
+            set_current_room(room_idx);
+        }
+    }
+    else
+    {
+        room->entities[room->local_entity_count].bitmap_idx = BITMAP_NPC;
+        room->entities[room->local_entity_count].position_px.x = entity_coord.x * TILE_SIZE_PX; 
+        room->entities[room->local_entity_count].position_px.y = entity_coord.y * TILE_SIZE_PX; 
+        room->local_entity_count++;
     }
 
     return true;
