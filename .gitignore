@@ -1,6 +1,7 @@
 *.o
 *.a
 *.bin
+*.elf
 *.ihex
 .cache/
 build/

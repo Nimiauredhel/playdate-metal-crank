@@ -2,10 +2,19 @@ cmake_minimum_required(VERSION 3.14)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 
-if (TOOLCHAIN STREQUAL "armgcc")
-    set(CMAKE_ASM_COMPILER "/usr/bin/arm-none-eabi-gcc-ar")
-    set(CMAKE_C_COMPILER "/usr/bin/arm-none-eabi-gcc")
-    set(CMAKE_CXX_COMPILER "/usr/bin/arm-none-eabi-c++")
+option(PLATFORM_PLAYDATE "Build for playdate" ON)
+option(PLAYDATE_BUILD_FOR_DEVICE "Build for playdate device")
+
+#if (TOOLCHAIN STREQUAL "armgcc")
+#     set(CMAKE_ASM_COMPILER "/usr/bin/arm-none-eabi-gcc-ar")
+#     set(CMAKE_C_COMPILER "/usr/bin/arm-none-eabi-gcc")
+#     set(CMAKE_CXX_COMPILER "/usr/bin/arm-none-eabi-c++")
+#endif()
+
+if (PLAYDATE_BUILD_FOR_DEVICE)
+      ADD_DEFINITIONS(-DPLATFORM_IMPL_PLAYDATE)
+      add_link_options("--specs=nosys.specs")
+else()
 endif()
 
 set(ENVSDK $ENV{PLAYDATE_SDK_PATH})
@@ -46,4 +55,3 @@ else()
 endif()
 
 include(${SDK}/C_API/buildsupport/playdate_game.cmake)
-
