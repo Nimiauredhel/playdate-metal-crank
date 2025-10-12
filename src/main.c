@@ -196,6 +196,21 @@ static const int mov_accel_max = 30;
 static const int mov_speed_min = 125;
 static const int mov_speed_max = 250;
 static const Vector2Int_t default_camera_offset = { 200, 120 };
+
+static const Vector2Int_t direction_vectors[4] =
+{
+    { .x = -1, .y = 0 },
+    { .x = 0, .y = -1 },
+    { .x = 1, .y = 0 },
+    { .x = 0, .y = 1 },
+};
+static const Vector2Int_t direction_vectors_tile_px[4] =
+{
+    { .x = -1*TILE_SIZE_PX, .y = 0 },
+    { .x = 0, .y = -1*TILE_SIZE_PX },
+    { .x = 1*TILE_SIZE_PX, .y = 0 },
+    { .x = 0, .y = 1*TILE_SIZE_PX },
+};
 static const Vector2Int_t adjacent_room_offsets[4] =
 {
     {-(ROOM_WIDTH*TILE_SIZE_PX), 0},
@@ -638,6 +653,43 @@ static void prepare_room_draw_positions(void)
     }
 }
 
+static void update_room(Room_t *room_ptr)
+{
+    Entity_t *entity = NULL;
+    Direction_t dir = DIR_NONE;
+    Vector2Int_t target_pos = {0};
+    Vector2Int_t target_tile = {0};
+    uint8_t viable_count = 0;
+    uint8_t dir_idx = 0;
+    Direction_t viable_dirs[4] = {0};
+
+    for (uint16_t i = 0; i < room_ptr->local_entity_count; i++)
+    {
+        viable_count = 0;
+        entity = room_ptr->entities+i;
+
+        for (Direction_t d = DIR_LEFT; d < DIR_COUNT; d++)
+        {
+            target_tile.x = (entity->position_px.x+direction_vectors_tile_px[d].x)/TILE_SIZE_PX;
+            target_tile.y = (entity->position_px.y+direction_vectors_tile_px[d].y)/TILE_SIZE_PX;
+
+            if (room_ptr->tiles[target_tile.x + (target_tile.y*ROOM_WIDTH)].flags & TILEFLAG_WALKABLE)
+            {
+                viable_dirs[viable_count] = d;
+                viable_count++;
+            }
+        }
+
+        if (viable_count > 0)
+        {
+            dir_idx = rand() % viable_count;
+            dir = viable_dirs[dir_idx];
+            entity->position_px.x += direction_vectors_tile_px[dir].x * eph.delta_time;
+            entity->position_px.y += direction_vectors_tile_px[dir].y * eph.delta_time;
+        }
+    }
+}
+
 static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
 {
     static const int draw_min = -TILE_SIZE_PX;
@@ -708,6 +760,7 @@ static void draw_adjacent_rooms(PlaydateAPI *pd, Vector2Int_t offset)
     {
         if (eph.adjacent_room_ptrs[i] != NULL)
         {
+            update_room(eph.adjacent_room_ptrs[i]);
             neighbour_offset.x = offset.x+adjacent_room_offsets[i].x;
             neighbour_offset.y = offset.y+adjacent_room_offsets[i].y;
             draw_room(pd, eph.adjacent_room_ptrs[i], neighbour_offset);
@@ -795,6 +848,7 @@ static void gameplay_draw(void)
 
     if (eph.current_room_ptr != NULL)
     {
+        update_room(eph.current_room_ptr);
         draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
         draw_adjacent_rooms(pd_s, eph.camera_offset);
 
