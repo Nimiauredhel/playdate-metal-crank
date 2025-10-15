@@ -100,10 +100,18 @@ typedef struct Vector3
     float z;
 } Vector3_t;
 
+typedef struct Triangle2D
+{
+    Vector2Int_t a;
+    Vector2Int_t b;
+    Vector2Int_t c;
+} Triangle2D_t;
+
 typedef struct Entity
 {
     Vector2Int_t position_px;
     Vector2Int_t mov_speed;
+    Direction_t heading;
     int bitmap_idx;
 } Entity_t;
 
@@ -818,6 +826,7 @@ static void update_local_entities(Room_t *room_ptr)
             }
         }
 
+        entity->heading = dir;
         target_vector.x = direction_vectors[dir].x * mov_speed_min;
         target_vector.y = direction_vectors[dir].y * mov_speed_min;
 
@@ -854,6 +863,7 @@ static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
     }
 
     Entity_t *entity = NULL;
+    Triangle2D_t vision_cone = {0};
 
     for (uint8_t i = 0; i < room_ptr->local_entity_count; i++)
     {
@@ -866,6 +876,23 @@ static void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
         if (draw_pos.y < draw_min || draw_pos.y > draw_max.y) continue;
 
         pd->graphics->drawBitmap(eph.bitmaps[entity->bitmap_idx], draw_pos.x, draw_pos.y, kBitmapUnflipped);
+
+        vision_cone.a.x = draw_pos.x + TILE_OFFSET_PX;
+        vision_cone.a.y = draw_pos.y + TILE_OFFSET_PX;
+        vision_cone.b.x = vision_cone.a.x + ((direction_vectors[entity->heading].x + direction_vectors[entity->heading].y) * TILE_SIZE_PX * 2);
+        vision_cone.b.y = vision_cone.a.y + ((direction_vectors[entity->heading].y - direction_vectors[entity->heading].x) * TILE_SIZE_PX * 2);
+        vision_cone.c.x = vision_cone.a.x + ((direction_vectors[entity->heading].x - direction_vectors[entity->heading].y) * TILE_SIZE_PX * 2);
+        vision_cone.c.y = vision_cone.a.y + ((direction_vectors[entity->heading].y + direction_vectors[entity->heading].x) * TILE_SIZE_PX * 2);
+
+        pd->graphics->drawLine(vision_cone.a.x, vision_cone.a.y,
+                              vision_cone.b.x, vision_cone.b.y,
+                              4, kColorBlack);
+        pd->graphics->drawLine(vision_cone.a.x, vision_cone.a.y,
+                              vision_cone.c.x, vision_cone.c.y,
+                              4, kColorBlack);
+        pd->graphics->drawLine(vision_cone.b.x, vision_cone.b.y,
+                              vision_cone.c.x, vision_cone.c.y,
+                              4, kColorWhite);
     }
 
     uint16_t room_idx = room_ptr->coord.x + ((room_ptr->coord.y) * LEVEL_WIDTH);
