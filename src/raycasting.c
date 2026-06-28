@@ -1,8 +1,173 @@
 #include "pd_api.h"
 #include "common_defs.h"
 #include "common.h"
-#include "raycasting.h"
 
+typedef struct ray_hit
+{
+    uint16_t index;
+    uint16_t type;
+    uint16_t side_px;
+    uint16_t tx;
+    uint16_t ty;
+    float rx;
+    float ry;
+    float dist;
+
+} ray_hit_t;
+
+#define TAU (6.283185f)
+#define PI (3.14159f)
+#define HALFPI (PI*0.5f)
+
+static const float PlayerAngle = 0.0;
+static const float PlayerDirX = 1.0;
+static const float PlayerDirY = 0.0;
+static const float PlayerLatX = 1.0;
+static const float PlayerLatY = 0.0;
+
+static const float FieldOfView = 55.0;
+static float Ratio;
+static float Cone;
+
+static uint16_t hit_count = 0;
+static ray_hit_t ray_hits[400] = {0};
+static uint16_t horizon_y = 90;
+
+static void gather_rays(void)
+{
+	uint8_t dof_max = 32;
+    uint16_t ray_count = eph.screen_size.x;
+	float ray_inc = Cone / ray_count;
+	float ray_angle = PlayerAngle - Cone/2.0f;
+
+    hit_count = 0;
+
+    for (uint8_t ray = 0; ray < ray_count; ray++)
+    {
+		if (ray_angle < 0.0f) ray_angle = ray_angle + TAU;
+		else if (ray_angle > TAU) ray_angle -= TAU;
+
+		uint16_t dof = 0;
+
+		float xoff = cosf(ray_angle);
+		float yoff = sinf(ray_angle);
+		float x_delta, y_delta, x_side, y_side = 0.0f;
+        uint16_t x_step, y_step = 1;
+
+		if (xoff == 0) x_delta = 1e30;
+		else x_delta = fabsf(1.0f/xoff);
+
+		if (yoff == 0) y_delta = 1e30;
+		else y_delta = fabsf(1.0f/yoff);
+
+        uint16_t PlayerX = eph.player_ptr->entity.position_px.x;
+        uint16_t PlayerY = eph.player_ptr->entity.position_px.y;
+
+		if (xoff < 0.0f)
+        {
+			x_side = (PlayerX - floorf(PlayerX)) * x_delta;
+			x_step = -1;
+        }
+		else x_side = (floorf(PlayerX) + 1.0f - PlayerX) * x_delta;
+
+		if (yoff < 0.0f)
+        {
+			y_side = (PlayerY - floorf(PlayerY)) * y_delta;
+			y_step = -1;
+        }
+		else y_side = (floorf(PlayerY) + 1.0f - PlayerY) * y_delta;
+
+		uint16_t tx = floorf(PlayerX);
+        uint16_t ty = floorf(PlayerY);
+		uint8_t side = 0;
+
+		while (dof < dof_max)
+        {
+			dof = dof + 1;
+			if (x_side < y_side)
+            {
+				side = 0;
+				x_side += x_delta;
+				tx += x_step;
+            }
+			else
+            {
+				side = 1;
+				y_side += y_delta;
+				ty += y_step;
+            }
+			if (tx < ROOM_WIDTH && ty < ROOM_HEIGHT && tx >=0 && ty >= 0)
+            {
+				uint8_t hit = eph.current_room_ptr->tiles[tx+(ty*ROOM_WIDTH)].bitmap_idx;
+
+				if (hit > 0)
+                {
+					dof = dof_max;
+					float dist = 0.0f;
+					float wall_x = 0.0f;
+					uint16_t side_px = 1;
+
+					if (side == 0) dist = x_side - x_delta;
+					else dist = y_side - y_delta;
+
+					side_px = 1+((dist-floorf(dist))*64);
+
+					if (dist < 0.001f) dist = 0.001f;
+
+					float rx = PlayerX + xoff * dist;
+					float ry = PlayerY + yoff * dist;
+
+					if (side == 0) wall_x = ry;
+					else wall_x = rx;
+
+					wall_x -= floorf(wall_x);
+					side_px = 1+wall_x * 64;
+
+                    ray_hits[hit_count].index = ray;
+                    ray_hits[hit_count].type = hit;
+                    ray_hits[hit_count].rx = rx;
+                    ray_hits[hit_count].ry = ry;
+                    ray_hits[hit_count].tx = tx;
+                    ray_hits[hit_count].ty = ty;
+                    ray_hits[hit_count].dist = dist;
+                    ray_hits[hit_count].side_px = side_px;
+					hit_count++;
+                }
+            }
+        }
+        ray_angle = ray_angle + ray_inc;
+    }
+}
+
+static void draw_constants(void)
+{
+    pd_s->graphics->fillRect(0, 0, eph.screen_size.x, horizon_y, kColorBlack);
+}
+
+static void draw_raycast(void)
+{
+}
+
+static void draw_sprites(void)
+{
+}
+
+static void draw_map(void)
+{
+}
+
+void raycasting_draw(void)
+{
+    horizon_y = eph.screen_size.y * 0.6;
+    Ratio = (float)eph.screen_size.x/(float)eph.screen_size.y;
+    Cone = (FieldOfView / 360.0f) * TAU * Ratio;
+    gather_rays();
+    draw_constants();
+    draw_raycast();
+    draw_sprites();
+    draw_map();
+}
+/*
 void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
 {
     static const int draw_min = -TILE_SIZE_PX;
@@ -106,9 +271,6 @@ void gameplay_draw(void)
 	pd_s->graphics->clear(kColorWhite);
 	pd_s->graphics->setFont(eph.font);
 
-    raycasting_draw();
-    return;
-
     if (eph.current_room_ptr != NULL)
     {
         draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
@@ -121,3 +283,4 @@ void gameplay_draw(void)
 
 	pd_s->system->drawFPS(0,0);
 }
+*/

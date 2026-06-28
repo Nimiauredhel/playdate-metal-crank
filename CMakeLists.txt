@@ -49,9 +49,9 @@ project(${PLAYDATE_GAME_NAME} C ASM)
 add_compile_options(--specs=/lib/arm-none-eabi/newlib/nosys.specs)
 
 if (TOOLCHAIN STREQUAL "armgcc")
-	add_executable(${PLAYDATE_GAME_DEVICE} src/main.c src/common.c src/draw.c)
+	add_executable(${PLAYDATE_GAME_DEVICE} src/main.c src/common.c src/draw.c src/raycasting.c)
 else()
-	add_library(${PLAYDATE_GAME_NAME} SHARED src/main.c src/common.c src/draw.c)
+	add_library(${PLAYDATE_GAME_NAME} SHARED src/main.c src/common.c src/draw.c src/raycasting.c)
 endif()
 
 include(${SDK}/C_API/buildsupport/playdate_game.cmake)
