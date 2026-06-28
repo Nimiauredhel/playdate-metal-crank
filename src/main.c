@@ -611,18 +611,13 @@ static void update_local_entities(Room_t *room_ptr)
     }
 }
 
-static void update_adjacent_rooms(PlaydateAPI *pd, Vector2Int_t offset)
+static void update_adjacent_rooms(PlaydateAPI *pd)
 {
-    Vector2Int_t neighbour_offset = offset;
-
     for (uint8_t i = 0; i < 4; i++)
     {
         if (eph.adjacent_room_ptrs[i] != NULL)
         {
             update_local_entities(eph.adjacent_room_ptrs[i]);
-            neighbour_offset.x = offset.x+adjacent_room_offsets[i].x;
-            neighbour_offset.y = offset.y+adjacent_room_offsets[i].y;
-            draw_room(pd, eph.adjacent_room_ptrs[i], neighbour_offset);
         }
     }
 }
@@ -696,28 +691,6 @@ static void game_init(void)
     eph.phase = PHASE_GAMEPLAY;
 }
 
-static void gameplay_draw(void)
-{
-    // draw gfx
-    static char text_buff[32] = {0};
-
-	pd_s->graphics->clear(kColorWhite);
-	pd_s->graphics->setFont(eph.font);
-
-    if (eph.current_room_ptr != NULL)
-    {
-        update_local_entities(eph.current_room_ptr);
-        draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
-        update_adjacent_rooms(pd_s, eph.camera_offset);
-
-        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
-        pd_s->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
-        pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
-    }
-
-	pd_s->system->drawFPS(0,0);
-}
-
 static int gameplay_update(void)
 {
     // get input
@@ -777,6 +750,13 @@ static int gameplay_update(void)
             eph.camera_offset.y += (eph.camera_offset_target.y - eph.camera_offset.y) * camera_follow_speed;
         }
     }
+
+    if (eph.current_room_ptr != NULL)
+    {
+        update_local_entities(eph.current_room_ptr);
+        update_adjacent_rooms(pd_s);
+    }
+
     gameplay_draw();
 
 	return 1;

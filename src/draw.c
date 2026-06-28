@@ -81,3 +81,39 @@ void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
         }
     }
 }
+
+void draw_adjacent_rooms(PlaydateAPI *pd, Vector2Int_t offset)
+{
+    Vector2Int_t neighbour_offset = offset;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        if (eph.adjacent_room_ptrs[i] != NULL)
+        {
+            neighbour_offset.x = offset.x+adjacent_room_offsets[i].x;
+            neighbour_offset.y = offset.y+adjacent_room_offsets[i].y;
+            draw_room(pd, eph.adjacent_room_ptrs[i], neighbour_offset);
+        }
+    }
+}
+
+void gameplay_draw(void)
+{
+    // draw gfx
+    static char text_buff[32] = {0};
+
+	pd_s->graphics->clear(kColorWhite);
+	pd_s->graphics->setFont(eph.font);
+
+    if (eph.current_room_ptr != NULL)
+    {
+        draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
+        draw_adjacent_rooms(pd_s, eph.camera_offset);
+
+        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
+        pd_s->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
+        pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
+    }
+
+	pd_s->system->drawFPS(0,0);
+}
