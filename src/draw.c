@@ -106,15 +106,22 @@ void gameplay_draw(void)
 	pd_s->graphics->clear(kColorWhite);
 	pd_s->graphics->setFont(eph.font);
 
-    raycasting_draw();
-    return;
-
-    if (eph.current_room_ptr != NULL)
+    if (map)
     {
-        draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
-        draw_adjacent_rooms(pd_s, eph.camera_offset);
+        if (eph.current_room_ptr != NULL)
+        {
+            draw_room(pd_s, eph.current_room_ptr, eph.camera_offset);
+            draw_adjacent_rooms(pd_s, eph.camera_offset);
 
-        snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
+            snprintf(text_buff, sizeof(text_buff), "Room [%d,%d]", eph.current_room_ptr->coord.x, eph.current_room_ptr->coord.y);
+            pd_s->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
+            pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
+        }
+    }
+    else
+    {
+        raycasting_draw();
+        snprintf(text_buff, sizeof(text_buff), "Angle [%.2f]", eph.PlayerAngle);
         pd_s->graphics->fillRect(0, 48, TEXT_WIDTH, TEXT_HEIGHT, kColorWhite);
         pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 48);
     }

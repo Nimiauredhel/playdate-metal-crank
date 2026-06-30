@@ -639,6 +639,7 @@ static void game_init(void)
     eph.screen_size.y = pd_s->display->getHeight();
     eph.camera_offset_target = default_camera_offset;
     eph.font = pd_s->graphics->loadFont(fontpath, &err);
+    eph.PlayerAngle = 0.0f;
     
     if ( eph.font == NULL )
     {
@@ -719,11 +720,31 @@ static int gameplay_update(void)
         if (target_speed > mov_speed_max) target_speed = mov_speed_max;
         if (mov_accel_val > mov_accel_max) mov_accel_val = mov_accel_max;
 
-        Vector2Int_t directional_target_speed =
+        map = eph.buttons_current & kButtonA;
+        Vector2Int_t directional_target_speed = { 0.0f, 0.0f };
+
+        if (map)
         {
-            target_speed * sign(((eph.buttons_current & kButtonRight) - (eph.buttons_current & kButtonLeft))),
-            target_speed * sign(((eph.buttons_current & kButtonDown) - (eph.buttons_current & kButtonUp))),
-        };
+            directional_target_speed.x = target_speed * sign(((eph.buttons_current & kButtonRight) - (eph.buttons_current & kButtonLeft)));
+            directional_target_speed.y = target_speed * sign(((eph.buttons_current & kButtonDown) - (eph.buttons_current & kButtonUp)));
+        }
+        else
+        {
+            eph.PlayerDirX = cosf(eph.PlayerAngle);
+            eph.PlayerDirY = sinf(eph.PlayerAngle);
+            eph.PlayerLatX = cosf(eph.PlayerAngle+HALFPI);
+            eph.PlayerLatY = sinf(eph.PlayerAngle+HALFPI);
+
+            int dir_mod = sign((eph.buttons_current & kButtonUp)-(eph.buttons_current & kButtonDown));
+
+            directional_target_speed.x = dir_mod * target_speed * eph.PlayerDirX;
+            directional_target_speed.y = dir_mod * target_speed * eph.PlayerDirY;
+
+            if ((eph.buttons_current & kButtonLeft) > 0) eph.PlayerAngle -= 0.1f;
+            else if ((eph.buttons_current & kButtonRight) > 0) eph.PlayerAngle += 0.1f;
+            if (eph.PlayerAngle > TAU) eph.PlayerAngle -= TAU;
+            else if (eph.PlayerAngle < 0.0f) eph.PlayerAngle += TAU;
+        }
         
         gameplay_move_entity(&eph.player_ptr->entity, eph.player_ptr, eph.current_room_ptr, directional_target_speed, mov_accel_val);
 

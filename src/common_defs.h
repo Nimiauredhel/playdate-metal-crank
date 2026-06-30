@@ -4,6 +4,10 @@
 #include "pd_api.h"
 #include <stdint.h>
 
+#define TAU (6.283185f)
+#define PI (3.14159f)
+#define HALFPI (PI*0.5f)
+
 #define TILE_SIZE_PX (40)
 #define TILE_OFFSET_PX (TILE_SIZE_PX / 2)
 #define TILE_COLL_PX (16)
@@ -175,6 +179,11 @@ typedef struct EphemeralState
     Vector2Int_t camera_offset;
     Vector2Int_t camera_peek_offset;
     GlobalEntity_t *player_ptr;
+    float PlayerAngle;
+    float PlayerDirX;
+    float PlayerDirY;
+    float PlayerLatX;
+    float PlayerLatY;
     Room_t *current_room_ptr;
     Room_t *adjacent_room_ptrs[4];
     RoomDrawPositions_t room_draw_positions;

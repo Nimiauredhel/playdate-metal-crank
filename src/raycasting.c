@@ -15,36 +15,28 @@ typedef struct ray_hit
 
 } ray_hit_t;
 
-#define TAU (6.283185f)
-#define PI (3.14159f)
-#define HALFPI (PI*0.5f)
-
-static const float PlayerAngle = 0.0;
-static const float PlayerDirX = 1.0;
-static const float PlayerDirY = 0.0;
-static const float PlayerLatX = 1.0;
-static const float PlayerLatY = 0.0;
-
-static const float FieldOfView = 55.0;
+static const float FieldOfView = 90.0;
 static float Ratio;
 static float Cone;
 
 static uint16_t hit_count = 0;
+static uint16_t ray_count;
 static ray_hit_t ray_hits[400] = {0};
 static uint16_t horizon_y = 90;
+static int last_hit = -1;
 
 static void gather_rays(void)
 {
-	uint8_t dof_max = 32;
-    uint16_t ray_count = eph.screen_size.x;
+	uint8_t dof_max = 200;
+    ray_count = eph.screen_size.x/1;
 	float ray_inc = Cone / ray_count;
-	float ray_angle = PlayerAngle - Cone/2.0f;
+	float ray_angle = eph.PlayerAngle - Cone/2.0f;
 
     hit_count = 0;
 
-    for (uint8_t ray = 0; ray < ray_count; ray++)
+    for (uint16_t ray = 0; ray < ray_count; ray++)
     {
-		if (ray_angle < 0.0f) ray_angle = ray_angle + TAU;
+		if (ray_angle < 0.0f) ray_angle += TAU;
 		else if (ray_angle > TAU) ray_angle -= TAU;
 
 		uint16_t dof = 0;
@@ -60,8 +52,8 @@ static void gather_rays(void)
 		if (yoff == 0) y_delta = 1e30;
 		else y_delta = fabsf(1.0f/yoff);
 
-        uint16_t PlayerX = eph.player_ptr->entity.position_px.x;
-        uint16_t PlayerY = eph.player_ptr->entity.position_px.y;
+        float PlayerX = (eph.player_ptr->entity.position_px.x+(TILE_SIZE_PX/2.0f))/(float)TILE_SIZE_PX;
+        float PlayerY = (eph.player_ptr->entity.position_px.y+(TILE_SIZE_PX/2.0f))/(float)TILE_SIZE_PX;
 
 		if (xoff < 0.0f)
         {
@@ -83,7 +75,7 @@ static void gather_rays(void)
 
 		while (dof < dof_max)
         {
-			dof = dof + 1;
+			dof++;
 			if (x_side < y_side)
             {
 				side = 0;
@@ -96,11 +88,12 @@ static void gather_rays(void)
 				y_side += y_delta;
 				ty += y_step;
             }
-			if (tx < ROOM_WIDTH && ty < ROOM_HEIGHT && tx >=0 && ty >= 0)
+			if (tx <= ROOM_WIDTH && ty <= ROOM_HEIGHT && tx >=0 && ty >= 0)
             {
-				uint8_t hit = eph.current_room_ptr->tiles[tx+(ty*ROOM_WIDTH)].bitmap_idx;
+				int hit = eph.current_room_ptr->tiles[tx+(ty*ROOM_WIDTH)].bitmap_idx;
+                last_hit = hit;
 
-				if (hit > 0)
+				if (hit > 3)
                 {
 					dof = dof_max;
 					float dist = 0.0f;
@@ -141,11 +134,27 @@ static void gather_rays(void)
 
 static void draw_constants(void)
 {
-    pd_s->graphics->fillRect(0, 0, eph.screen_size.x, horizon_y, kColorBlack);
+    //pd_s->graphics->fillRect(0, 0, eph.screen_size.x, horizon_y, kColorBlack);
 }
 
 static void draw_raycast(void)
 {
+    uint16_t s_w = eph.screen_size.x / ray_count;
+
+	for(uint16_t i = 0; i < hit_count; i++)
+    {
+		float mod = 1.0f - (ray_hits[i].dist/10.0f);
+
+		if (mod < 0.0f)
+        {
+			mod = 0.0f;
+        }
+
+		int s_h = horizon_y / ray_hits[i].dist;
+        if (s_h < 0) s_h = 0;
+		uint16_t start_x = s_w * (ray_hits[i].index);
+        pd_s->graphics->fillRect(start_x, horizon_y-(s_h*0.5f), s_w, s_h, kColorBlack);
+    }
 }
 
 static void draw_sprites(void)
@@ -158,14 +167,19 @@ static void draw_map(void)
 
 void raycasting_draw(void)
 {
+    static char text_buff[32] = {0};
     horizon_y = eph.screen_size.y * 0.6;
-    Ratio = (float)eph.screen_size.x/(float)eph.screen_size.y;
+    //Ratio = (float)eph.screen_size.x/(float)eph.screen_size.y;
+    Ratio = 1.0f;
     Cone = (FieldOfView / 360.0f) * TAU * Ratio;
     gather_rays();
     draw_constants();
     draw_raycast();
     draw_sprites();
     draw_map();
+    snprintf(text_buff, sizeof(text_buff), "Ray Hits [%u/%u] Last Hit [%d]", hit_count, ray_count, last_hit);
+    pd_s->graphics->fillRect(0, 64, 200, TEXT_HEIGHT, kColorWhite);
+    pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 64);
 }
 /*
 void draw_room(PlaydateAPI *pd, Room_t *room_ptr, Vector2Int_t offset)
