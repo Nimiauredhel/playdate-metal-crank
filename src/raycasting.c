@@ -15,7 +15,7 @@ typedef struct ray_hit
 
 } ray_hit_t;
 
-static const float FieldOfView = 90.0;
+static const float FieldOfView = 55.0;
 static float Ratio;
 static float Cone;
 
@@ -27,8 +27,8 @@ static int last_hit = -1;
 
 static void gather_rays(void)
 {
-	uint8_t dof_max = 200;
-    ray_count = eph.screen_size.x/1;
+	uint16_t dof_max = 200;
+    ray_count = eph.screen_size.x;
 	float ray_inc = Cone / ray_count;
 	float ray_angle = eph.PlayerAngle - Cone/2.0f;
 
@@ -44,7 +44,7 @@ static void gather_rays(void)
 		float xoff = cosf(ray_angle);
 		float yoff = sinf(ray_angle);
 		float x_delta, y_delta, x_side, y_side = 0.0f;
-        uint16_t x_step, y_step = 1;
+        float x_step, y_step = 1.0f;
 
 		if (xoff == 0) x_delta = 1e30;
 		else x_delta = fabsf(1.0f/xoff);
@@ -52,20 +52,20 @@ static void gather_rays(void)
 		if (yoff == 0) y_delta = 1e30;
 		else y_delta = fabsf(1.0f/yoff);
 
-        float PlayerX = (eph.player_ptr->entity.position_px.x+(TILE_SIZE_PX/2.0f))/(float)TILE_SIZE_PX;
-        float PlayerY = (eph.player_ptr->entity.position_px.y+(TILE_SIZE_PX/2.0f))/(float)TILE_SIZE_PX;
+        float PlayerX = 0.5f+(eph.player_ptr->entity.position_px.x/(float)TILE_SIZE_PX);
+        float PlayerY = 0.5f+(eph.player_ptr->entity.position_px.y/(float)TILE_SIZE_PX);
 
 		if (xoff < 0.0f)
         {
 			x_side = (PlayerX - floorf(PlayerX)) * x_delta;
-			x_step = -1;
+			x_step = -1.0f;
         }
 		else x_side = (floorf(PlayerX) + 1.0f - PlayerX) * x_delta;
 
 		if (yoff < 0.0f)
         {
 			y_side = (PlayerY - floorf(PlayerY)) * y_delta;
-			y_step = -1;
+			y_step = -1.0f;
         }
 		else y_side = (floorf(PlayerY) + 1.0f - PlayerY) * y_delta;
 
@@ -88,47 +88,53 @@ static void gather_rays(void)
 				y_side += y_delta;
 				ty += y_step;
             }
-			if (tx <= ROOM_WIDTH && ty <= ROOM_HEIGHT && tx >=0 && ty >= 0)
+
+            int hit = -1;
+
+            if (tx < ROOM_WIDTH && ty < ROOM_HEIGHT && tx >= 0 && ty >= 0)
             {
-				int hit = eph.current_room_ptr->tiles[tx+(ty*ROOM_WIDTH)].bitmap_idx;
-                last_hit = hit;
+				hit = eph.current_room_ptr->tiles[tx+(ty*ROOM_WIDTH)].bitmap_idx;
+            }
+            else
+            {
+                hit = 4;
+            }
 
-				if (hit > 3)
-                {
-					dof = dof_max;
-					float dist = 0.0f;
-					float wall_x = 0.0f;
-					uint16_t side_px = 1;
+            if (hit > 3)
+            {
+                dof = dof_max;
+                float dist = 0.0f;
+                float wall_x = 0.0f;
+                uint16_t side_px = 1;
 
-					if (side == 0) dist = x_side - x_delta;
-					else dist = y_side - y_delta;
+                if (side == 0) dist = x_side - x_delta;
+                else dist = y_side - y_delta;
 
-					side_px = 1+((dist-floorf(dist))*64);
+                side_px = 1+((dist-floorf(dist))*64);
 
-					if (dist < 0.001f) dist = 0.001f;
+                if (dist < 0.001f) dist = 0.001f;
 
-					float rx = PlayerX + xoff * dist;
-					float ry = PlayerY + yoff * dist;
+                float rx = PlayerX + xoff * dist;
+                float ry = PlayerY + yoff * dist;
 
-					if (side == 0) wall_x = ry;
-					else wall_x = rx;
+                if (side == 0) wall_x = ry;
+                else wall_x = rx;
 
-					wall_x -= floorf(wall_x);
-					side_px = 1+wall_x * 64;
+                wall_x -= floorf(wall_x);
+                side_px = 1+wall_x * 64;
 
-                    ray_hits[hit_count].index = ray;
-                    ray_hits[hit_count].type = hit;
-                    ray_hits[hit_count].rx = rx;
-                    ray_hits[hit_count].ry = ry;
-                    ray_hits[hit_count].tx = tx;
-                    ray_hits[hit_count].ty = ty;
-                    ray_hits[hit_count].dist = dist;
-                    ray_hits[hit_count].side_px = side_px;
-					hit_count++;
-                }
+                ray_hits[hit_count].index = ray;
+                ray_hits[hit_count].type = hit;
+                ray_hits[hit_count].rx = rx;
+                ray_hits[hit_count].ry = ry;
+                ray_hits[hit_count].tx = tx;
+                ray_hits[hit_count].ty = ty;
+                ray_hits[hit_count].dist = dist;
+                ray_hits[hit_count].side_px = side_px;
+                hit_count++;
             }
         }
-        ray_angle = ray_angle + ray_inc;
+        ray_angle += ray_inc;
     }
 }
 
@@ -140,20 +146,21 @@ static void draw_constants(void)
 static void draw_raycast(void)
 {
     uint16_t s_w = eph.screen_size.x / ray_count;
+    if (s_w < 1) s_w = 1;
 
 	for(uint16_t i = 0; i < hit_count; i++)
     {
-		float mod = 1.0f - (ray_hits[i].dist/10.0f);
+		float mod = 1.0f - (ray_hits[i].dist/16.0f);
 
 		if (mod < 0.0f)
         {
 			mod = 0.0f;
         }
 
-		int s_h = horizon_y / ray_hits[i].dist;
+		int s_h = horizon_y * mod;
         if (s_h < 0) s_h = 0;
-		uint16_t start_x = s_w * (ray_hits[i].index);
-        pd_s->graphics->fillRect(start_x, horizon_y-(s_h*0.5f), s_w, s_h, kColorBlack);
+		uint16_t start_x = s_w * i;//(ray_hits[i].index);
+        pd_s->graphics->fillRect(start_x, horizon_y-(s_h/2), s_w, s_h, kColorBlack);
     }
 }
 
@@ -163,6 +170,12 @@ static void draw_sprites(void)
 
 static void draw_map(void)
 {
+    pd_s->graphics->fillRect(0, 0, eph.screen_size.x, eph.screen_size.y, kColorBlack);
+
+	for(uint16_t i = 0; i < hit_count; i++)
+    {
+        pd_s->graphics->drawLine(eph.player_ptr->entity.position_px.x+eph.camera_offset.x, eph.player_ptr->entity.position_px.y+eph.camera_offset.y, ray_hits[i].rx*TILE_SIZE_PX+eph.camera_offset.x, ray_hits[i].ry*TILE_SIZE_PX+eph.camera_offset.y, 1, kColorWhite);
+    }
 }
 
 void raycasting_draw(void)
@@ -173,10 +186,16 @@ void raycasting_draw(void)
     Ratio = 1.0f;
     Cone = (FieldOfView / 360.0f) * TAU * Ratio;
     gather_rays();
-    draw_constants();
-    draw_raycast();
-    draw_sprites();
-    draw_map();
+    if (map < 0)
+    {
+        draw_map();
+    }
+    else
+    {
+        draw_constants();
+        draw_raycast();
+        draw_sprites();
+    }
     snprintf(text_buff, sizeof(text_buff), "Ray Hits [%u/%u] Last Hit [%d]", hit_count, ray_count, last_hit);
     pd_s->graphics->fillRect(0, 64, 200, TEXT_HEIGHT, kColorWhite);
     pd_s->graphics->drawText(text_buff, strlen(text_buff), kASCIIEncoding, 0, 64);

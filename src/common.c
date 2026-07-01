@@ -47,4 +47,4 @@ const Vector2Int_t adjacent_room_offsets[4] =
 PlaydateAPI *pd_s = NULL;
 SerializableState_t ser = {0};
 EphemeralState_t eph = {0};
-bool map = false;
+int map = 0;

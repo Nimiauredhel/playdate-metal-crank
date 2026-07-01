@@ -720,10 +720,10 @@ static int gameplay_update(void)
         if (target_speed > mov_speed_max) target_speed = mov_speed_max;
         if (mov_accel_val > mov_accel_max) mov_accel_val = mov_accel_max;
 
-        map = eph.buttons_current & kButtonA;
+        map = ((eph.buttons_current & kButtonA)>0) - ((eph.buttons_current & kButtonB)>0);
         Vector2Int_t directional_target_speed = { 0.0f, 0.0f };
 
-        if (map)
+        if (map > 0)
         {
             directional_target_speed.x = target_speed * sign(((eph.buttons_current & kButtonRight) - (eph.buttons_current & kButtonLeft)));
             directional_target_speed.y = target_speed * sign(((eph.buttons_current & kButtonDown) - (eph.buttons_current & kButtonUp)));
@@ -740,8 +740,8 @@ static int gameplay_update(void)
             directional_target_speed.x = dir_mod * target_speed * eph.PlayerDirX;
             directional_target_speed.y = dir_mod * target_speed * eph.PlayerDirY;
 
-            if ((eph.buttons_current & kButtonLeft) > 0) eph.PlayerAngle -= 0.1f;
-            else if ((eph.buttons_current & kButtonRight) > 0) eph.PlayerAngle += 0.1f;
+            if ((eph.buttons_current & kButtonLeft) > 0) eph.PlayerAngle -= 0.01f*TAU;
+            else if ((eph.buttons_current & kButtonRight) > 0) eph.PlayerAngle += 0.01f*TAU;
             if (eph.PlayerAngle > TAU) eph.PlayerAngle -= TAU;
             else if (eph.PlayerAngle < 0.0f) eph.PlayerAngle += TAU;
         }

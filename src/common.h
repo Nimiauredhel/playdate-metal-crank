@@ -19,6 +19,6 @@ extern const Vector2Int_t adjacent_room_offsets[4];
 extern PlaydateAPI *pd_s;
 extern SerializableState_t ser;
 extern EphemeralState_t eph;
-extern bool map;
+extern int map;
 
 #endif

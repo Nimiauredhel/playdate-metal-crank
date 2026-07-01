@@ -106,7 +106,7 @@ void gameplay_draw(void)
 	pd_s->graphics->clear(kColorWhite);
 	pd_s->graphics->setFont(eph.font);
 
-    if (map)
+    if (map > 0)
     {
         if (eph.current_room_ptr != NULL)
         {
